@@ -1,0 +1,108 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CreditTxType {
+  FREE
+  EARN_CONTRACT
+  SHARE_DAILY
+  SPEND_GENERATE
+}
+
+model User {
+  id               String   @id @default(cuid())
+  fid              Int      @unique
+  username         String?
+  displayName      String?
+  pfpUrl           String?
+  primaryWallet    String?
+  credits          Int      @default(0)
+  freeGranted      Boolean  @default(false)
+  lastShareAt      DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  creditTxs        CreditTx[]
+  generations      GeneratedPost[]
+  notificationSubs NotificationSub[]
+}
+
+model CreditTx {
+  id        String       @id @default(cuid())
+  fid       Int
+  type      CreditTxType
+  delta     Int
+  txHash    String?      @unique
+  meta      Json?
+  createdAt DateTime     @default(now())
+
+  user      User         @relation(fields: [fid], references: [fid], onDelete: Cascade)
+
+  @@index([fid, createdAt])
+}
+
+model RawPost {
+  id         String   @id @default(cuid())
+  tweetId    String   @unique
+  timestamp  DateTime
+  handle     String
+  text       String
+  url        String?
+  likes      Int      @default(0)
+  reposts    Int      @default(0)
+  replies    Int      @default(0)
+  views      Int      @default(0)
+  isReply    Boolean  @default(false)
+  isRetweet  Boolean  @default(false)
+  raw        Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  generated  GeneratedPost[]
+  @@index([timestamp])
+  @@index([handle])
+}
+
+model GeneratedPost {
+  id          String   @id @default(cuid())
+  rawPostId   String
+  fid         Int
+  stylePreset String
+  length      String
+  variantIdx  Int
+  category    String
+  confidence  String
+  angle       String
+  text        String
+  inputHash   String
+  outputHash  String
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [fid], references: [fid], onDelete: Cascade)
+  rawPost     RawPost  @relation(fields: [rawPostId], references: [id], onDelete: Cascade)
+
+  @@index([fid, createdAt])
+  @@index([rawPostId, createdAt])
+  @@unique([rawPostId, fid, stylePreset, length, variantIdx, createdAt], map: "unique_gen_v1")
+}
+
+model NotificationSub {
+  id        String   @id @default(cuid())
+  fid       Int
+  appFid    Int
+  token     String
+  url       String
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User     @relation(fields: [fid], references: [fid], onDelete: Cascade)
+
+  @@unique([fid, appFid])
+  @@index([enabled])
+}
