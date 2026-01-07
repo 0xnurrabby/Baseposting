@@ -4,6 +4,7 @@ import { prisma } from "../../lib/db";
 import { requireUser } from "../../lib/auth";
 import { classify, confidence, diceSimilarity, has7WordOverlap, normalizeText } from "../../lib/text";
 import OpenAI from "openai";
+import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 
 const GenerateBodySchema = z.object({
