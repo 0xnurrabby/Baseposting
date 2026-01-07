@@ -161,15 +161,32 @@ async function callOpenAI(args: {
     guardrails,
   ].join("\n");
 
-  const r = await openai.responses.create({
-    model,
-    input: [
-      { role: "system", content: "You are a careful, high-precision writing assistant." },
-      { role: "user", content: prompt },
-    ],
-    response_format: { type: "json_schema", json_schema: outputSchema },
-    temperature: 0.85,
-  });
+  // Zod schema we want back from the model
+const VariantsSchema = z.object({
+  variants: z.array(
+    z.object({
+      angle: z.string().min(1),
+      text: z.string().min(1),
+    })
+  ),
+});
+
+const r = await openai.responses.parse({
+  model,
+  input: [
+    { role: "system", content: "You are a careful, high-precision writing assistant." },
+    { role: "user", content: prompt },
+  ],
+  // ✅ correct way in OpenAI Responses API (no response_format here)
+  text: {
+    format: zodTextFormat(VariantsSchema, "variants_result"),
+  },
+  temperature: 0.85,
+});
+
+// Prefer parsed output (guaranteed typed when model supports it)
+const parsed = r.output_parsed ?? JSON.parse(r.output_text);
+
 
   const outText = r.output_text;
   const parsed = JSON.parse(outText);
