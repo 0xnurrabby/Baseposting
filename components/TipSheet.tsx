@@ -30,11 +30,14 @@ export function TipSheet({ open, onClose }: Props) {
   const [state, setState] = useState<TipState>("idle");
 
   const canSend = useMemo(() => {
-    const b = window.__BASEPOSTING_BUILDER__;
-    const hasBuilder = Boolean(b?.dataSuffix) && b?.BUILDER_CODE !== "TODO_REPLACE_BUILDER_CODE";
-    const hasRecipient = !isTodoRecipient(RECIPIENT);
-    return hasBuilder && hasRecipient;
-  }, [open]);
+  if (typeof window === "undefined") return false;
+
+  const b = window.__BASEPOSTING_BUILDER__;
+  const hasBuilder = Boolean(b?.dataSuffix) && b?.BUILDER_CODE !== "TODO_REPLACE_BUILDER_CODE";
+  const hasRecipient = !isTodoRecipient(RECIPIENT);
+  return hasBuilder && hasRecipient;
+}, [open]);
+
 
   const ctaLabel =
     state === "idle"
