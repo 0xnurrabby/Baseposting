@@ -29,10 +29,6 @@ function sha256(input: string) {
   return crypto.createHash("sha256").update(input).digest("hex");
 }
 
-function randPick<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
 function uniqAngles(n: number): string[] {
   const pool = [...ANGLE_BANK];
   const out: string[] = [];
@@ -43,6 +39,17 @@ function uniqAngles(n: number): string[] {
   }
   return out;
 }
+
+const VariantsSchema = z.object({
+  variants: z.array(
+    z.object({
+      angle: z.string().min(1),
+      text: z.string().min(1),
+    })
+  ),
+});
+
+type Variant = { text: string; angle: string };
 
 async function callOpenAI(args: {
   inputText: string;
@@ -55,37 +62,13 @@ async function callOpenAI(args: {
   category: "INFO" | "OPINION" | "MEME";
   confidence: "HIGH" | "LOW";
   creditOnInfo: boolean;
-}): Promise<{ variants: { text: string; angle: string }[] }> {
+}): Promise<{ variants: Variant[] }> {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+  // Use a safe default model
   const model = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
 
   const angles = uniqAngles(args.variantCount);
-
-  const outputSchema = {
-    name: "BasePostGeneratorOutput",
-    schema: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        variants: {
-          type: "array",
-          minItems: args.variantCount,
-          maxItems: args.variantCount,
-          items: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              angle: { type: "string" },
-              text: { type: "string" },
-            },
-            required: ["angle", "text"],
-          },
-        },
-      },
-      required: ["variants"],
-    },
-    strict: true,
-  } as const;
 
   const styleGuide = (() => {
     switch (args.stylePreset) {
@@ -161,43 +144,40 @@ async function callOpenAI(args: {
     guardrails,
   ].join("\n");
 
-  // Zod schema we want back from the model
-const VariantsSchema = z.object({
-  variants: z.array(
-    z.object({
-      angle: z.string().min(1),
-      text: z.string().min(1),
-    })
-  ),
-});
+  // ✅ IMPORTANT: use responses.parse + text.format (NOT response_format)
+  const r = await openai.responses.parse({
+    model,
+    input: [
+      { role: "system", content: "You are a careful, high-precision writing assistant." },
+      { role: "user", content: prompt },
+    ],
+    text: {
+      format: zodTextFormat(VariantsSchema, "variants_result"),
+    },
+    temperature: 0.85,
+  });
 
-const r = await openai.responses.parse({
-  model,
-  input: [
-    { role: "system", content: "You are a careful, high-precision writing assistant." },
-    { role: "user", content: prompt },
-  ],
-  // ✅ correct way in OpenAI Responses API (no response_format here)
-  text: {
-    format: zodTextFormat(VariantsSchema, "variants_result"),
-  },
-  temperature: 0.85,
-});
+  // parsed output if available, otherwise fallback to output_text json parse
+  let parsed: unknown = r.output_parsed;
+  if (!parsed) {
+    const outText = r.output_text?.trim() ?? "";
+    if (!outText) {
+      throw new Error("openai_empty_output");
+    }
+    parsed = JSON.parse(outText);
+  }
 
-// Prefer parsed output (guaranteed typed when model supports it)
-const parsed = r.output_parsed ?? JSON.parse(r.output_text);
+  const v = VariantsSchema.parse(parsed);
 
+  // enforce count EXACT
+  if (v.variants.length !== args.variantCount) {
+    throw new Error("openai_wrong_variant_count");
+  }
 
-  const outText = r.output_text;
-  const parsed = JSON.parse(outText);
-  const variants = z
-    .object({ variants: z.array(z.object({ angle: z.string(), text: z.string().min(1) })).min(args.variantCount).max(args.variantCount) })
-    .parse(parsed).variants;
-
-  return { variants };
+  return { variants: v.variants };
 }
 
-function validateVariants(inputText: string, variants: { text: string; angle: string }[]) {
+function validateVariants(inputText: string, variants: Variant[]) {
   const cleaned = variants.map((v) => ({
     ...v,
     text: v.text.replace(/\s+$/g, "").trim(),
@@ -208,7 +188,6 @@ function validateVariants(inputText: string, variants: { text: string; angle: st
     if (has7WordOverlap(inputText, v.text)) {
       return { ok: false, reason: "overlap_guard" as const };
     }
-    // avoid direct @handle copy at the start (we're generating user's voice)
     if (normalizeText(v.text).startsWith(normalizeText(inputText).slice(0, 24))) {
       return { ok: false, reason: "too_close" as const };
     }
@@ -241,7 +220,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!user) return res.status(401).json({ error: "user_missing" });
     if (user.credits < 1) return res.status(402).json({ error: "no_credits" });
 
-    // Spend immediately to prevent race conditions (optimistic, but tracked)
+    // Spend immediately to prevent race conditions
     await prisma.$transaction(async (tx) => {
       const fresh = await tx.user.findUnique({ where: { fid }, select: { credits: true } });
       if (!fresh || fresh.credits < 1) throw Object.assign(new Error("no_credits"), { statusCode: 402 });
@@ -252,7 +231,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const category = classify(rawPost.text, rawPost.url);
     const conf = confidence(rawPost.text, rawPost.url);
 
-    let variants: { text: string; angle: string }[] = [];
+    let variants: Variant[] = [];
     let attempts = 0;
 
     while (attempts < 3) {
