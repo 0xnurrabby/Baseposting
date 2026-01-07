@@ -1,31 +1,43 @@
+// lib/auth.ts
 import { createClient, Errors } from "@farcaster/quick-auth";
-import type { NextApiRequest } from "next";
 
 const client = createClient();
 
-/**
- * Domain must EXACTLY match the deployed hostname per Quick Auth.
- * (No scheme, no path.)
- */
-export const HOSTNAME = "baseposting.online";
-
-export type AuthUser = {
+export type MiniAppUser = {
   fid: number;
 };
 
-export async function requireUser(req: NextApiRequest): Promise<AuthUser> {
-  const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith("Bearer ")) {
-    throw Object.assign(new Error("Missing token"), { statusCode: 401 });
+export class AuthError extends Error {
+  status = 401 as const;
+  constructor(message = "Unauthorized") {
+    super(message);
   }
-  const token = auth.slice("Bearer ".length).trim();
+}
+
+export async function requireMiniAppUserFromHeaders(headers: {
+  authorization?: string | string[];
+}): Promise<MiniAppUser> {
+  const raw = headers.authorization;
+  const authorization = Array.isArray(raw) ? raw[0] : raw;
+
+  if (!authorization || !authorization.startsWith("Bearer ")) {
+    throw new AuthError("Missing token");
+  }
+
+  const token = authorization.slice("Bearer ".length).trim();
+
   try {
-    const payload = await client.verifyJwt({ token, domain: HOSTNAME });
+    const payload = await client.verifyJwt({
+      token,
+      domain: "baseposting.online"
+    });
+
+    // payload.sub = fid (number)
     return { fid: payload.sub };
   } catch (e) {
     if (e instanceof Errors.InvalidTokenError) {
-      throw Object.assign(new Error("Invalid token"), { statusCode: 401 });
+      throw new AuthError("Invalid token");
     }
-    throw Object.assign(new Error("Auth error"), { statusCode: 401 });
+    throw e;
   }
 }
