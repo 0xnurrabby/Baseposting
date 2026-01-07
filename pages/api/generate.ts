@@ -177,8 +177,12 @@ async function callOpenAI(args: {
   return { variants: v.variants };
 }
 
-function validateVariants(inputText: string, variants: Variant[]) {
-  const cleaned = variants.map((v) => ({
+type ValidateOk = { ok: true; cleaned: Variant[] };
+type ValidateFail = { ok: false; reason: "overlap_guard" | "too_close" | "variants_too_similar" };
+type ValidateResult = ValidateOk | ValidateFail;
+
+function validateVariants(inputText: string, variants: Variant[]): ValidateResult {
+  const cleaned: Variant[] = variants.map((v) => ({
     ...v,
     text: v.text.replace(/\s+$/g, "").trim(),
   }));
@@ -186,10 +190,10 @@ function validateVariants(inputText: string, variants: Variant[]) {
   // overlap guard
   for (const v of cleaned) {
     if (has7WordOverlap(inputText, v.text)) {
-      return { ok: false, reason: "overlap_guard" as const };
+      return { ok: false, reason: "overlap_guard" };
     }
     if (normalizeText(v.text).startsWith(normalizeText(inputText).slice(0, 24))) {
-      return { ok: false, reason: "too_close" as const };
+      return { ok: false, reason: "too_close" };
     }
   }
 
@@ -197,13 +201,14 @@ function validateVariants(inputText: string, variants: Variant[]) {
   for (let i = 0; i < cleaned.length; i++) {
     for (let j = i + 1; j < cleaned.length; j++) {
       if (diceSimilarity(cleaned[i].text, cleaned[j].text) > 0.86) {
-        return { ok: false, reason: "variants_too_similar" as const };
+        return { ok: false, reason: "variants_too_similar" };
       }
     }
   }
 
-  return { ok: true as const, cleaned };
+  return { ok: true, cleaned };
 }
+
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "method_not_allowed" });
