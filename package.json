@@ -1,0 +1,24 @@
+{
+  "name": "base-post-generator-miniapp",
+  "private": true,
+  "version": "1.0.0",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.11.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@farcaster/miniapp-sdk": "0.2.1",
+    "@farcaster/quick-auth": "0.0.8",
+    "@farcaster/miniapp-node": "0.1.9",
+    "next": "16.1.0",
+    "openai": "6.8.1",
+    "pg": "8.16.3",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  }
+}
