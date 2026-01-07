@@ -70,8 +70,15 @@ export function TipSheet({ open, onClose }: Props) {
         return;
       }
 
-      const provider = await sdk.wallet.getEthereumProvider();
-      const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
+     const provider = await sdk.wallet.getEthereumProvider();
+if (!provider) {
+  toast.error("Wallet provider not available. Open inside Farcaster Mini App.");
+  setState("idle");
+  return;
+}
+
+const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
+
       const from = accounts?.[0];
       if (!from) throw new Error("no_account");
 
