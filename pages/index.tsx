@@ -102,8 +102,9 @@ export default function Home() {
   useEffect(() => {
     (async () => {
       try {
-        const mini = sdk.isInMiniApp();
-        setIsMiniApp(mini);
+        const mini = await sdk.isInMiniApp();
+setIsMiniApp(mini);
+
 
         if (!mini) return;
 
