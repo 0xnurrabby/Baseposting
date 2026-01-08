@@ -561,7 +561,7 @@ export default function App() {
             </CardHeader>
             <CardContent>
               <div className="text-sm text-zinc-700 dark:text-zinc-300">
-                Open <span className="font-semibold">{SITE_URL}/</span> from inside a Farcaster client (Warpcast / Base app), not a normal browser.
+                Open <span className="font-semibold">{SITE_URL}/</span> from inside a Farcaster client (Warpcast / Base app), not a normal browser. If you are actually in the mini app, then refresh the page.
               </div>
             </CardContent>
           </Card>
