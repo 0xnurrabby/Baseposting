@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>BasePosting</title>
+<meta name="base:app_id" content="693d2f9ed77c069a945bde4d" />
+    <!-- REQUIRED: Farcaster Mini App embed meta tags (strict JSON, single-line, wrapped in single quotes) -->
+	    <meta name="fc:miniapp" content='{"version":"1","imageUrl":"https://basepostingbro.vercel.app/assets/embed-3x2.png","button":{"title":"Open BasePosting","action":{"type":"launch_frame","name":"BasePosting","url":"https://basepostingbro.vercel.app/","splashImageUrl":"https://basepostingbro.vercel.app/assets/splash-200.png","splashBackgroundColor":"#0B0F14"}}}' />
+	    <meta name="fc:frame" content='{"version":"1","imageUrl":"https://basepostingbro.vercel.app/assets/embed-3x2.png","button":{"title":"Open BasePosting","action":{"type":"launch_frame","name":"BasePosting","url":"https://basepostingbro.vercel.app/","splashImageUrl":"https://basepostingbro.vercel.app/assets/splash-200.png","splashBackgroundColor":"#0B0F14"}}}' />
+
+    <!-- Open Graph / social -->
+    <meta property="og:title" content="BasePosting" />
+    <meta property="og:description" content="Scrape the latest X posts and generate Base bangers." />
+	    <meta property="og:image" content="https://basepostingbro.vercel.app/assets/og-1200x630.png" />
+	    <meta property="og:url" content="https://basepostingbro.vercel.app/" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <link rel="icon" type="image/png" href="/assets/icon-64.png" />
+
+    <!-- REQUIRED: Builder attribution helper (loads ox/erc8021 from ESM URL) -->
+    <script type="module" src="/builder-attribution.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
