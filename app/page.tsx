@@ -29,8 +29,10 @@ export default function Page() {
   const [theme, setTheme] = React.useState<"light" | "dark">("dark");
 
   React.useEffect(() => {
+    // Mini App: always call ready to hide splash.
     safeReady();
 
+    // Default theme based on system (but allow toggle)
     try {
       const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
       const initial = prefersDark ? "dark" : "light";
@@ -114,12 +116,12 @@ export default function Page() {
     if (!result) return;
 
     try {
-      // miniapp-sdk composeCast embeds expects fixed-length tuple (0/1/2), not string[]
+      // composeCast embeds expects fixed-length tuple (0/1/2), not string[]
       const embeds: [string] = ["https://baseposting.online/"];
       const out = await sdk.actions.composeCast({ text: result, embeds });
       if (out?.cast) toast.success("Cast composer opened");
     } catch {
-      // last-resort fallback (keeps user unblocked)
+      // last-resort fallback
       const url = `https://warpcast.com/~/compose?text=${encodeURIComponent(result)}`;
       await sdk.actions.openUrl(url);
     }
@@ -160,7 +162,6 @@ export default function Page() {
       const { userId } = await getMiniAppUserId();
 
       const provider = await sdk.wallet.getEthereumProvider();
-      // ✅ FIX: provider can be undefined -> narrow it
       if (!provider) {
         throw new Error("Wallet provider unavailable. Please open inside Warpcast/Base app.");
       }
@@ -181,21 +182,23 @@ export default function Page() {
       const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
       const from = accounts?.[0];
       if (!from) throw new Error("No wallet connected");
+      if (!/^0x[a-fA-F0-9]{40}$/.test(from)) throw new Error("Invalid wallet address");
 
       toast("Preparing transaction…");
       await new Promise((r) => setTimeout(r, 900));
 
+      // ✅ FIX: hex template literal types for strict TS
       const txHash = (await provider.request({
         method: "eth_sendTransaction",
         params: [
           {
-            from,
-            to: "0xB331328F506f2D35125e367A190e914B1b6830cF",
-            value: "0x0",
-            data: "0x",
+            from: from as `0x${string}`,
+            to: "0xB331328F506f2D35125e367A190e914B1b6830cF" as `0x${string}`,
+            value: "0x0" as `0x${string}`,
+            data: "0x" as `0x${string}`,
           },
         ],
-      })) as string;
+      })) as `0x${string}`;
 
       toast("Verifying on Base…");
       const r = await fetch("/api/credits/tx", {
