@@ -13,9 +13,11 @@ const USDC_DECIMALS = 6;
 
 const RECIPIENT = "0xB331328F506f2D35125e367A190e914B1b6830cF" as const;
 
-// NOTE: You asked "no placeholders" — keeping a real value.
-// If you ever want strict disable behavior, set it to "TODO_REPLACE_BUILDER_CODE" and the UI will disable.
-const BUILDER_CODE = "baseposting.online";
+// ✅ WIDEN THE TYPE so TS doesn't treat it as a literal-only type
+const BUILDER_CODE: string = "baseposting.online";
+
+// MUST import EXACTLY this source (your requirement)
+const OX_ERC8021_URL = "https://esm.sh/ox/erc8021";
 
 function pad32(hexNo0x: string) {
   return hexNo0x.padStart(64, "0");
@@ -29,7 +31,6 @@ function parseUsdcAmount(input: string): bigint {
   const [whole, frac = ""] = s.split(".");
   const fracPadded = (frac + "0".repeat(USDC_DECIMALS)).slice(0, USDC_DECIMALS);
 
-  // avoid BigInt("") edge
   const asStr = (whole || "0") + fracPadded;
   const amt = BigInt(asStr);
 
@@ -42,18 +43,17 @@ function encodeErc20Transfer(to: string, amount: bigint): `0x${string}` {
   const selector = "a9059cbb";
   const toNo0x = to.replace(/^0x/, "");
   const amtHex = amount.toString(16);
-
   return `0x${selector}${pad32(toNo0x.toLowerCase())}${pad32(amtHex)}` as `0x${string}`;
 }
 
-// ✅ cache it so repeated tips don't re-import
+// ✅ cache to avoid re-importing
 let dataSuffixPromise: Promise<string> | null = null;
 
 async function getDataSuffix(): Promise<string> {
   if (!dataSuffixPromise) {
     dataSuffixPromise = (async () => {
-      // Remote ESM import (client-side). TS is satisfied by types/esmsh.d.ts
-      const mod = await import(/* webpackIgnore: true */ "https://esm.sh/ox/erc8021");
+      // TS will succeed because of esmsh.d.ts in root
+      const mod = await import(/* webpackIgnore: true */ OX_ERC8021_URL);
       const { Attribution } = mod as any;
       return Attribution.toDataSuffix({ codes: [BUILDER_CODE] }) as string;
     })();
@@ -69,12 +69,12 @@ export function TipSheet({ open, onClose }: Props) {
 
   const preset = ["1", "5", "10", "25"];
 
-  const canSend = React.useMemo(() => {
+  const isConfigured = React.useMemo(() => {
     try {
       const rec = getAddress(RECIPIENT);
-      // builder code must be present
-      if (!BUILDER_CODE || BUILDER_CODE === "TODO_REPLACE_BUILDER_CODE") return false;
-      return isAddress(rec);
+      // ✅ No literal-compare TS error anymore
+      const builderOk = BUILDER_CODE.trim().length > 0 && BUILDER_CODE !== "TODO_REPLACE_BUILDER_CODE";
+      return builderOk && isAddress(rec);
     } catch {
       return false;
     }
@@ -88,8 +88,6 @@ export function TipSheet({ open, onClose }: Props) {
 
   async function switchToBase(provider: any) {
     const chainId = (await provider.request({ method: "eth_chainId" })) as string;
-
-    // Allow Base mainnet + Base sepolia
     if (chainId === "0x2105" || chainId === "0x14a34") return chainId;
 
     try {
@@ -105,15 +103,13 @@ export function TipSheet({ open, onClose }: Props) {
 
   async function sendTip() {
     try {
-      if (!canSend) {
+      if (!isConfigured) {
         toast.error("Tip is not configured yet.");
         return;
       }
 
       const provider = await sdk.wallet.getEthereumProvider();
-      if (!provider) {
-        throw new Error("Wallet provider unavailable. Please open inside Warpcast/Base app.");
-      }
+      if (!provider) throw new Error("Wallet provider unavailable. Please open inside Warpcast/Base app.");
 
       await switchToBase(provider);
 
@@ -126,16 +122,14 @@ export function TipSheet({ open, onClose }: Props) {
       const to = getAddress(RECIPIENT);
       const data = encodeErc20Transfer(to, value);
 
-      // State machine
       setStage("preparing");
-      // ✅ Pre-wallet animation required
+      // REQUIRED pre-wallet animation
       await new Promise((r) => setTimeout(r, 1200));
       setStage("confirm");
 
       const chainId = (await provider.request({ method: "eth_chainId" })) as `0x${string}`;
       const dataSuffix = await getDataSuffix();
 
-      // ✅ ERC-5792 payload (strict, typed)
       const payload = {
         version: "2.0.0",
         from: from as `0x${string}`,
@@ -148,9 +142,7 @@ export function TipSheet({ open, onClose }: Props) {
             data: data as `0x${string}`,
           },
         ],
-        capabilities: {
-          dataSuffix,
-        },
+        capabilities: { dataSuffix },
       };
 
       setStage("sending");
@@ -245,7 +237,7 @@ export function TipSheet({ open, onClose }: Props) {
                 <Button
                   className="w-full"
                   loading={stage === "preparing" || stage === "sending"}
-                  disabled={!canSend || stage === "confirm"}
+                  disabled={!isConfigured || stage === "confirm"}
                   onClick={() => {
                     sdk.haptics?.impactOccurred?.("light").catch(() => {});
                     if (stage === "done") reset();
@@ -255,9 +247,9 @@ export function TipSheet({ open, onClose }: Props) {
                   {ctaText}
                 </Button>
 
-                {!canSend ? (
+                {!isConfigured ? (
                   <div className="mt-2 text-xs text-zinc-500">
-                    Tip is disabled until RECIPIENT & BUILDER_CODE are valid.
+                    Tip is disabled until RECIPIENT &amp; BUILDER_CODE are valid.
                   </div>
                 ) : null}
               </div>
