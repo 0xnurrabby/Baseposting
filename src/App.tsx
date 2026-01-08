@@ -805,7 +805,7 @@ export default function App() {
           ) : null}
 
           <div className="mt-8 text-center text-xs text-zinc-500 dark:text-zinc-500">
-            Runs at <span className="font-semibold">{SITE_URL}/</span>
+            © Copyright 2026
           </div>
         </div>
       </div>
