@@ -599,7 +599,7 @@ export default function App() {
 
           <Card className="mt-6">
             <CardHeader>
-              <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Generate</div>
+              <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Generate Basepost</div>
               <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">╰┈➤</div>
             </CardHeader>
             <CardContent>
@@ -663,7 +663,7 @@ export default function App() {
           >
             <Card className="mt-6">
               <CardHeader>
-                <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Your Banger✎</div>
+                <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Basepost</div>
                 <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400"></div>
               </CardHeader>
               <CardContent>
