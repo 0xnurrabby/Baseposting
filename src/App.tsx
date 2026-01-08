@@ -315,7 +315,7 @@ export default function App() {
     setSharing(true)
     try {
       await hapticImpact(capabilities, 'medium')
-      const shareText = `I just generated a Base banger with BasePosting. Try it: ${SITE_URL}/` // keep it simple
+      const shareText = `I just generated a Base banger with BasePosting. Want to stay consistent on Base?💙 Try it: ${SITE_URL}/` // keep it simple
       const cast = await composeCast({
         text: shareText,
         embeds: [`${SITE_URL}/`],
@@ -664,7 +664,7 @@ export default function App() {
             <Card className="mt-6">
               <CardHeader>
                 <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Your Banger✎</div>
-                <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Basepost ⌯⌲</div>
+                <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400"></div>
               </CardHeader>
               <CardContent>
                 {generating ? (
@@ -678,7 +678,7 @@ export default function App() {
                     {result}
                   </div>
                 ) : (
-                  <div className="text-sm text-zinc-600 dark:text-zinc-400">Generate to see your post here.</div>
+                  <div className="text-sm text-zinc-600 dark:text-zinc-400">Hit Generate to see your post here ⌯⌲</div>
                 )}
 
                 <div className="mt-4 flex flex-col gap-2 sm:flex-row">
