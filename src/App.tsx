@@ -663,8 +663,8 @@ export default function App() {
           >
             <Card className="mt-6">
               <CardHeader>
-                <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Result</div>
-                <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">One click → one unique post.</div>
+                <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Your Banger✎</div>
+                <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Basepost ⌯⌲</div>
               </CardHeader>
               <CardContent>
                 {generating ? (
