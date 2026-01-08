@@ -29,14 +29,13 @@ export default function Page() {
   const [theme, setTheme] = React.useState<"light" | "dark">("dark");
 
   React.useEffect(() => {
-    // Mini App: always call ready to hide splash.
     safeReady();
 
-    // Default theme based on system (but allow toggle)
     try {
       const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
-      setTheme(prefersDark ? "dark" : "light");
-      document.documentElement.classList.toggle("dark", !!prefersDark);
+      const initial = prefersDark ? "dark" : "light";
+      setTheme(initial);
+      document.documentElement.classList.toggle("dark", initial === "dark");
     } catch {}
 
     refreshStatus();
@@ -97,16 +96,25 @@ export default function Page() {
 
   async function copy() {
     if (!result) return;
-    await navigator.clipboard.writeText(result);
-    toast("Copied");
-    sdk.haptics?.impactOccurred?.("light").catch(() => {});
+
+    try {
+      if (typeof navigator === "undefined" || !navigator.clipboard) {
+        toast.error("Clipboard not available");
+        return;
+      }
+      await navigator.clipboard.writeText(result);
+      toast("Copied");
+      sdk.haptics?.impactOccurred?.("light").catch(() => {});
+    } catch {
+      toast.error("Copy failed");
+    }
   }
 
   async function postDirectly() {
     if (!result) return;
 
     try {
-      // IMPORTANT: miniapp-sdk composeCast embeds expects fixed-length tuple (0/1/2), not string[]
+      // miniapp-sdk composeCast embeds expects fixed-length tuple (0/1/2), not string[]
       const embeds: [string] = ["https://baseposting.online/"];
       const out = await sdk.actions.composeCast({ text: result, embeds });
       if (out?.cast) toast.success("Cast composer opened");
@@ -150,7 +158,12 @@ export default function Page() {
   async function getCreditTx() {
     try {
       const { userId } = await getMiniAppUserId();
+
       const provider = await sdk.wallet.getEthereumProvider();
+      // ✅ FIX: provider can be undefined -> narrow it
+      if (!provider) {
+        throw new Error("Wallet provider unavailable. Please open inside Warpcast/Base app.");
+      }
 
       // Ensure Base
       const chainId = (await provider.request({ method: "eth_chainId" })) as string;
@@ -203,6 +216,7 @@ export default function Page() {
   }
 
   const credits = status?.credits ?? 0;
+  const shareDisabled = !!status?.lastShareDate && status.lastShareDate === status.todayUtc;
 
   return (
     <div className="min-h-screen">
@@ -260,11 +274,7 @@ export default function Page() {
               Get Credit
             </Button>
 
-            <Button
-              variant="secondary"
-              onClick={shareForCredits}
-              disabled={!!status?.lastShareDate && status.lastShareDate === status.todayUtc}
-            >
+            <Button variant="secondary" onClick={shareForCredits} disabled={shareDisabled}>
               <Share2 className="h-4 w-4" />
               Share for 2 credit
             </Button>
