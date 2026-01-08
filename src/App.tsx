@@ -751,7 +751,7 @@ export default function App() {
                 </div>
 
                 <div className="mt-4 grid grid-cols-4 gap-2">
-                  {[1, 5, 10, 25].map((v) => (
+                  {[100, 250, 500, 1000].map((v) => (
                     <button
                       key={v}
                       onClick={() => setTipUsd(String(v))}
