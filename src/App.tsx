@@ -645,7 +645,7 @@ export default function App() {
                     className="w-full sm:w-auto"
                   >
                     <HandCoins className="h-4 w-4" />
-                    Tip
+                    Tip Me
                   </Button>
                 </div>
               </div>
