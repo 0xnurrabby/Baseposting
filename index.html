@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Farcaster Mini App Embed (STRICT: single-line JSON, single quotes, no truncation) -->
+    <meta name="fc:miniapp" content='{"version":"1","imageUrl":"https://baseposting.online/assets/embed-3x2.png","button":{"title":"Generate Base bangers","action":{"type":"launch_frame","url":"https://baseposting.online/","name":"BasePosting","splashImageUrl":"https://baseposting.online/assets/splash-200.png","splashBackgroundColor":"#0C0E12"}}}' />
+    <meta name="fc:frame" content='{"version":"1","imageUrl":"https://baseposting.online/assets/embed-3x2.png","button":{"title":"Generate Base bangers","action":{"type":"launch_frame","url":"https://baseposting.online/","name":"BasePosting","splashImageUrl":"https://baseposting.online/assets/splash-200.png","splashBackgroundColor":"#0C0E12"}}}' />
+
+    <!-- Standard social metadata -->
+    <meta property="og:title" content="BasePosting" />
+    <meta property="og:description" content="Scrape fresh X posts via Apify, then generate unique Base-focused banger posts with GPT." />
+    <meta property="og:image" content="https://baseposting.online/assets/embed-3x2.png" />
+    <meta property="og:url" content="https://baseposting.online/" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://baseposting.online/assets/embed-3x2.png" />
+
+    <link rel="icon" type="image/png" href="https://baseposting.online/assets/icon-1024.png" />
+    <title>BasePosting</title>
+  </head>
+  <body class="bg-zinc-950 text-white">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
