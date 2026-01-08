@@ -600,7 +600,7 @@ export default function App() {
           <Card className="mt-6">
             <CardHeader>
               <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Generate</div>
-              <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">✎</div>
+              <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">╰┈➤</div>
             </CardHeader>
             <CardContent>
               <div className="flex flex-col gap-3">
