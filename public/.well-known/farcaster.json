@@ -1,0 +1,34 @@
+{
+  "accountAssociation": {
+    "header": " ",
+    "payload": " ",
+    "signature": " " },
+  "miniapp": {
+    "version": "1",
+    "name": "BasePosting",
+    "homeUrl": "https://baseposting.online/",
+    "iconUrl": "https://baseposting.online/assets/icon-1024.png",
+    "splashImageUrl": "https://baseposting.online/assets/splash-200.png",
+    "splashBackgroundColor": "#09090b",
+    "webhookUrl": "https://baseposting.online/api/webhook",
+    "subtitle": "Base bangers from X",
+    "description": "Stay consistent, Stay based, Post banger",
+    "screenshotUrls": [
+      "https://baseposting.online/assets/embed-3x2.png"
+    ],
+    "primaryCategory": "social",
+    "tags": [
+      "social",
+      "utility",
+      "developer-tools",
+      "ai",
+      "base"
+    ],
+    "heroImageUrl": "https://baseposting.online/assets/embed-3x2.png",
+    "tagline": "Generate. Post. Repeat.",
+    "ogTitle": "Base bangers generator",
+    "ogDescription": "Turn live X posts into unique Base ecosystem posts. Earn credits onchain. Tip in USDC.",
+    "ogImageUrl": "https://baseposting.online/assets/embed-3x2.png",
+    "noindex": false
+  }
+}
