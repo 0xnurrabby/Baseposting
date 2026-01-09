@@ -13,7 +13,7 @@
     "splashBackgroundColor": "#09090b",
     "webhookUrl": "https://basepostingbro.vercel.app/api/webhook",
     "subtitle": "Base bangers from X",
-    "description": "Scrape the latest X/Twitter posts via Apify, then generate unique, human-like Base-focused posts with GPT — with onchain credits + tips.",
+    "description": "Stay consistent, Stay based, Post banger💙",
     "screenshotUrls": [
       "https://basepostingbro.vercel.app/assets/embed-3x2.png"
     ],
@@ -27,7 +27,7 @@
     ],
     "heroImageUrl": "https://basepostingbro.vercel.app/assets/embed-3x2.png",
     "tagline": "Generate. Post. Repeat.",
-    "ogTitle": "BasePosting — Base bangers generator",
+    "ogTitle": "Base bangers generator",
     "ogDescription": "Turn live X posts into unique Base ecosystem posts. Earn credits onchain. Tip in USDC.",
     "ogImageUrl": "https://basepostingbro.vercel.app/assets/embed-3x2.png",
     "noindex": false
