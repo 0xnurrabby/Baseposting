@@ -101,6 +101,31 @@ export default function App() {
     const stored = localStorage.getItem('bp_theme')
     setDark(stored ? stored === 'dark' : true)
   }, [])
+useEffect(() => {
+  const params = new URLSearchParams(window.location.search)
+  if (params.get('src') !== 'notif') return
+
+  const fid = Number(params.get('fid'))
+  const appFid = Number(params.get('appFid'))
+  const nid = params.get('nid') || ''
+
+  if (Number.isFinite(fid) && Number.isFinite(appFid)) {
+    fetch('/api/notif/opened', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fid, appFid, nid }),
+    }).catch(() => {})
+  }
+
+  // clean URL so it doesn't stay in address bar
+  params.delete('src')
+  params.delete('fid')
+  params.delete('appFid')
+  params.delete('nid')
+  const qs = params.toString()
+  const clean = window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash
+  window.history.replaceState({}, '', clean)
+}, [])
 
   useEffect(() => {
     if (!mounted) return
