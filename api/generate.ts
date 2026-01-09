@@ -125,12 +125,15 @@ async function openaiGenerate(args: {
     .join('\n')
 
   const system = [
-    'You write like an elite crypto twitter / Farcaster poster.',
+    'You write like an elite crypto base social app / Farcaster poster.',
     'Goal: craft ONE short post that feels human, clever, and unique (no template vibes).',
     'It must be Base-focused, punchy, natural, and non-cringe. Emojis are tasteful and minimal.',
+    'Do NOT use long dashes (—)',
+    'Do NOT use aesthetic/creator/thread emojis like 🎨🧵🖌️🖼️✨🪄🌙💫📌📝.',
     'Never hallucinate specific Base ecosystem product claims, launches, metrics, or partnerships. If you cannot verify from provided context, stay general.',
     'Avoid repeating common openers. Avoid cliches and generic motivational fluff.',
     'Output ONLY the final post text. No quotes around it. No hashtags unless truly organic (max 1).',
+    'Write in a professional, human, natural tone.',
     '',
     'Static Base facts (safe):',
     ...BASE_FACTS.map((x) => `- ${x}`),
