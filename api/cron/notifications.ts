@@ -14,15 +14,18 @@ function appUrl() {
 }
 
 function buildPayload(now: number, fid: number, appFid: number, token: string) {
+  const notificationId = crypto.randomUUID()
+
   return {
-    notificationId: crypto.randomUUID(),
+    notificationId,
     title: 'BasePosting',
     body: 'Just 2 clicks on BasePosting and you can keep your consistency 💙',
-    targetUrl: appUrl(),
+    targetUrl: `${appUrl()}/?src=notif&fid=${fid}&appFid=${appFid}&nid=${notificationId}`,
     tokens: [token],
-    data: { fid, appFid, ts: now },
+    data: { fid, appFid, ts: now, nid: notificationId },
   }
 }
+
 
 export default async function handler(req: any, res: any) {
   setCors(req, res)
