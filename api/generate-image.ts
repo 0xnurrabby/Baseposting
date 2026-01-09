@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import { adjustCredits, getOrCreateUser, getRedisClient } from './_lib/store.js'
 import { handleOptions, json, readJson, requirePost, setCors } from './_lib/http.js'
-import { generateImageWithImagen } from './_lib/gemini-image.js'
+import { generateImageWithPollinations } from './_lib/gemini-image.js'
 
 const COST_IMAGE = 5
 const IMAGE_TTL_SECONDS = 60 * 60 * 48 // 48h
