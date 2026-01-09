@@ -11,7 +11,8 @@ function toUserId(body: any) {
   const address = body?.address
   if (typeof fid === 'number' && Number.isFinite(fid)) return `fid:${fid}`
   if (typeof fid === 'string' && fid.trim() && !Number.isNaN(Number(fid))) return `fid:${Number(fid)}`
-  if (typeof address === 'string' && address.startsWith('0x') && address.length >= 42) return `addr:${address.toLowerCase()}`
+  if (typeof address === 'string' && address.startsWith('0x') && address.length >= 42)
+    return `addr:${address.toLowerCase()}`
   return null
 }
 
@@ -22,13 +23,12 @@ function baseUrl(req: any) {
   const vercel = process.env.VERCEL_URL
   if (vercel) return `https://${vercel}`
 
-  const proto = req.headers['x-forwarded-proto'] || 'https'
-  const host = req.headers['x-forwarded-host'] || req.headers.host
+  const proto = (req?.headers?.['x-forwarded-proto'] as string) || 'https'
+  const host = (req?.headers?.['x-forwarded-host'] as string) || req?.headers?.host
   return `${proto}://${host}`
 }
 
 function buildPromptFromPostText(postText: string) {
-  // Keep prompts short to reduce safety blocks and to improve adherence.
   const cleaned = String(postText || '')
     .replace(/https?:\/\/\S+/g, '')
     .replace(/[#@]\S+/g, '')
@@ -43,49 +43,57 @@ function buildPromptFromPostText(postText: string) {
 }
 
 export default async function handler(req: any, res: any) {
-  setCors(res)
+  // ✅ FIX 1: must pass (req, res)
+  setCors(req, res)
+
   if (handleOptions(req, res)) return
-  requirePost(req)
 
-  const body = await readJson(req)
-  const userId = toUserId(body)
-  if (!userId) return json(res, 400, { ok: false, error: 'Missing identity (fid or address)' })
-
-  const text = String(body?.text || '').trim()
-  if (!text) return json(res, 400, { ok: false, error: 'Missing text' })
-
-  const user = await getOrCreateUser(userId)
-  if (user.credits < COST_IMAGE) {
-    return json(res, 402, { ok: false, error: 'No credits left', credits: user.credits })
-  }
-
-  // Charge upfront.
-  const charged = await adjustCredits(userId, -COST_IMAGE)
+  // ✅ FIX 2: must pass res + stop execution if not POST
+  if (!requirePost(req, res)) return
 
   try {
-    const prompt = buildPromptFromPostText(text)
-    const img = await generateImageWithImagen(prompt)
+    const body = await readJson(req)
+    const userId = toUserId(body)
+    if (!userId) return json(res, 400, { ok: false, error: 'Missing identity (fid or address)' })
 
-    // Store image bytes with a short TTL and return a public URL.
-    const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex')
-    const redis = getRedisClient()
-    if (!redis) {
-      // If Redis isn't configured, we can't persist bytes. Refund and fail.
-      await adjustCredits(userId, COST_IMAGE)
-      return json(res, 500, { ok: false, error: 'Image storage is not configured (missing Redis)' })
+    const text = String(body?.text || '').trim()
+    if (!text) return json(res, 400, { ok: false, error: 'Missing text' })
+
+    const user = await getOrCreateUser(userId)
+    if (user.credits < COST_IMAGE) {
+      return json(res, 402, { ok: false, error: 'No credits left', credits: user.credits })
     }
 
-    await redis.set(`bpimg:${id}`, JSON.stringify({ b64: img.b64, mimeType: img.mimeType }), {
-      ex: IMAGE_TTL_SECONDS,
-    })
+    // Charge upfront
+    const charged = await adjustCredits(userId, -COST_IMAGE)
 
-    const url = `${baseUrl(req)}/api/image?id=${encodeURIComponent(id)}`
-    return json(res, 200, { ok: true, imageUrl: url, credits: charged.credits })
+    try {
+      const prompt = buildPromptFromPostText(text)
+      const img = await generateImageWithImagen(prompt)
+
+      const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex')
+
+      const redis = getRedisClient()
+      if (!redis) {
+        // Refund if Redis isn't configured
+        await adjustCredits(userId, COST_IMAGE)
+        return json(res, 500, { ok: false, error: 'Image storage is not configured (missing Redis)' })
+      }
+
+      await redis.set(`bpimg:${id}`, JSON.stringify({ b64: img.b64, mimeType: img.mimeType }), {
+        ex: IMAGE_TTL_SECONDS,
+      })
+
+      const url = `${baseUrl(req)}/api/image?id=${encodeURIComponent(id)}`
+      return json(res, 200, { ok: true, imageUrl: url, credits: charged.credits })
+    } catch (e: any) {
+      // Refund on failure
+      const refunded = await adjustCredits(userId, COST_IMAGE)
+      const status = Number(e?.status) || 500
+      const message = e?.message || 'Image generation failed'
+      return json(res, status, { ok: false, error: message, credits: refunded.credits })
+    }
   } catch (e: any) {
-    // Refund on failure.
-    const refunded = await adjustCredits(userId, COST_IMAGE)
-    const status = Number(e?.status) || 500
-    const message = e?.message || 'Image generation failed'
-    return json(res, status, { ok: false, error: message, credits: refunded.credits })
+    return json(res, 400, { ok: false, error: e?.message || 'Invalid request body' })
   }
 }
