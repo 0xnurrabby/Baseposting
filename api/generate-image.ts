@@ -69,7 +69,8 @@ export default async function handler(req: any, res: any) {
 
     try {
       const prompt = buildPromptFromPostText(text)
-      const img = await generateImageWithImagen(prompt)
+      const img = await generateImageWithPollinations(prompt)
+
 
       const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex')
 
