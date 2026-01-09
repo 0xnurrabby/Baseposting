@@ -260,8 +260,3 @@ export async function generateImageWithImagen(prompt: string) {
   if (provider === 'pollinations') return generateImageWithPollinations(prompt)
   return generateImageWithGoogle(prompt)
 }
-
-// Optional named export if you want to call explicitly
-export async function generateImageWithPollinations(prompt: string) {
-  return generateImageWithPollinations(prompt)
-}
