@@ -15,23 +15,117 @@ type ParsedWebhookData = {
   }
 }
 
-function makeVerifier() {
+/** ---------- cache helpers (module-scope) ---------- **/
+const memOkUntil = new Map<string, number>() // key -> expiresAtMs
+const inflight = new Map<string, Promise<boolean>>() // burst-dedupe
+
+function safeStringify(x: any) {
+  return JSON.stringify(x, (_k, v) => (typeof v === 'bigint' ? v.toString() : v))
+}
+
+function memHasValid(key: string) {
+  const exp = memOkUntil.get(key)
+  if (!exp) return false
+  if (Date.now() > exp) {
+    memOkUntil.delete(key)
+    return false
+  }
+  return true
+}
+
+function memSet(key: string, ttlSeconds: number) {
+  memOkUntil.set(key, Date.now() + ttlSeconds * 1000)
+}
+
+function isRateLimitError(e: any) {
+  const msg = String(e?.message || e || '')
+  const code = String(e?.code || '')
+  const status = Number(e?.status || e?.statusCode || 0)
+  return (
+    status === 429 ||
+    code === 'RateLimitExceeded' ||
+    msg.includes('RateLimitExceeded') ||
+    msg.includes('429') ||
+    msg.toLowerCase().includes('rate limit')
+  )
+}
+
+class VerifyThrottledError extends Error {
+  constructor(message = 'verify_throttled') {
+    super(message)
+    this.name = 'VerifyThrottledError'
+  }
+}
+
+function makeVerifier(redis: any, ttlSeconds: number) {
   const apiKey = process.env.NEYNAR_API_KEY
 
-  // Base docs: parseWebhookEvent(requestJson, verifyAppKeyWithNeynar)
+  // Base docs: parseWebhookEvent(payload, verifyAppKeyWithNeynar)
   // Some setups use verifyAppKeyWithNeynar(apiKey) -> function
-  let verifier: any = verifyAppKeyWithNeynar as any
+  let baseVerifier: any = verifyAppKeyWithNeynar as any
 
   if (apiKey) {
     try {
       const maybe = (verifyAppKeyWithNeynar as any)(apiKey)
-      if (typeof maybe === 'function') verifier = maybe
+      if (typeof maybe === 'function') baseVerifier = maybe
     } catch {
       // ignore and fall back
     }
   }
 
-  return verifier
+  // cached wrapper
+  return async (...args: any[]) => {
+    // key based on verifier args (usually includes appKey/appFid etc.)
+    const key = `miniapp:verify:${safeStringify(args)}`
+    const redisKey = key
+    const ttl = Math.max(60, Number(ttlSeconds) || 15 * 60)
+
+    // 1) in-memory fast path (per instance)
+    if (memHasValid(key)) return true
+
+    // 2) redis fast path (shared across instances)
+    try {
+      const hit = await redis.get(redisKey)
+      if (hit) {
+        memSet(key, ttl)
+        return true
+      }
+    } catch {
+      // ignore redis read errors
+    }
+
+    // 3) burst dedupe (avoid N parallel verifies)
+    const existing = inflight.get(key)
+    if (existing) return await existing
+
+    const p = (async () => {
+      try {
+        const ok = await baseVerifier(...args)
+        if (ok) {
+          memSet(key, ttl)
+          try {
+            // Upstash style: set(key, val, { ex })
+            await redis.set(redisKey, '1', { ex: ttl })
+          } catch {
+            // ignore cache set errors
+          }
+        }
+        return !!ok
+      } catch (e: any) {
+        // IMPORTANT: rate limit হলে এখানে special error throw করব,
+        // যাতে handler 200 রিটার্ন করতে পারে (retries থামাতে)
+        if (isRateLimitError(e)) {
+          throw new VerifyThrottledError(String(e?.message || 'rate_limited'))
+        }
+        throw e
+      } finally {
+        inflight.delete(key)
+      }
+    })()
+
+    inflight.set(key, p)
+    return await p
+  }
 }
 
 async function readRawBody(req: any): Promise<string> {
@@ -51,8 +145,6 @@ export default async function handler(req: any, res: any) {
     return json(res, 405, { ok: false, error: 'Method Not Allowed' })
   }
 
-  // NOTE: Base app waits for successful webhook response before activating tokens,
-  // so keep this handler fast. :contentReference[oaicite:2]{index=2}
   let bodyText = ''
   try {
     bodyText = await readRawBody(req)
@@ -63,7 +155,7 @@ export default async function handler(req: any, res: any) {
   const redis = getRedisClient()
   if (!redis) return json(res, 500, { ok: false, error: 'Redis not configured' })
 
-  // Try parse JSON, but keep raw-string fallback (some hosts send as string)
+  // Try parse JSON, but keep raw-string fallback
   let bodyJson: any = null
   try {
     bodyJson = JSON.parse(bodyText)
@@ -71,11 +163,19 @@ export default async function handler(req: any, res: any) {
     bodyJson = null
   }
 
+  const ttlSeconds = Number(process.env.WEBHOOK_VERIFY_TTL_SECONDS || 15 * 60) // default 15 min
+
   let data: ParsedWebhookData
   try {
-    // Base docs pass request JSON object; spec payload is {header,payload,signature}. :contentReference[oaicite:3]{index=3}
-    data = (await parseWebhookEvent(bodyJson ?? bodyText, makeVerifier())) as any
+    data = (await parseWebhookEvent(bodyJson ?? bodyText, makeVerifier(redis, ttlSeconds))) as any
   } catch (e: any) {
+    // ✅ rate limit / throttled -> 200 (stop retries)
+    if (e?.name === 'VerifyThrottledError' || isRateLimitError(e)) {
+      console.warn('Webhook verify throttled (Neynar 429). Returning 200 to stop retries.', e?.message || e)
+      return json(res, 200, { ok: true, warning: 'verify_throttled' })
+    }
+
+    // ❌ real invalid signature -> 401
     const msg = String(e?.message || e || 'Invalid signature')
     return json(res, 401, { ok: false, error: msg })
   }
@@ -95,9 +195,7 @@ export default async function handler(req: any, res: any) {
 
   try {
     switch (evtType) {
-      // Farcaster spec: miniapp_added can include notificationDetails (token/url). :contentReference[oaicite:4]{index=4}
       case 'miniapp_added':
-      // Base docs: notifications_enabled also includes token/url. :contentReference[oaicite:5]{index=5}
       case 'notifications_enabled': {
         if (details?.token && details?.url) {
           await upsertNotificationDetails(redis, fid, appFid, {
@@ -110,14 +208,11 @@ export default async function handler(req: any, res: any) {
 
       case 'miniapp_removed':
       case 'notifications_disabled': {
-        // Spec: disable payload might not include notificationDetails,
-        // but parseWebhookEvent gives fid/appFid. :contentReference[oaicite:6]{index=6}
         await disableNotifications(redis, fid, appFid)
         break
       }
 
       default: {
-        // unknown event — do nothing
         break
       }
     }
