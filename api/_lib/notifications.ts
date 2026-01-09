@@ -9,10 +9,28 @@ export const NOTIF_KEYS = {
 export type NotifRecord = {
   fid: number
   appFid: number
+
+  // push routing (from webhook)
   token: string
   url: string
+
+  // scheduling
   cadenceHours: number
   nextSendAt: number
+
+  // analytics / state (optional for backward-compat)
+  enabled?: boolean
+  enabledAt?: number
+  disabledAt?: number
+  updatedAt?: number
+
+  sentCount?: number
+  lastSentAt?: number
+
+  openedCount?: number
+  lastOpenedAt?: number
+
+  lastError?: string
 }
 
 export type WebhookEventLog = {
@@ -37,6 +55,14 @@ export async function pushEvent(redis: Redis, evt: WebhookEventLog) {
   await redis.ltrim(NOTIF_KEYS.events, 0, 199)
 }
 
+function normalizeRecord(rec: NotifRecord): NotifRecord {
+  // Backward compatible defaults
+  if (rec.enabled === undefined) rec.enabled = true
+  if (rec.sentCount === undefined) rec.sentCount = 0
+  if (rec.openedCount === undefined) rec.openedCount = 0
+  return rec
+}
+
 export async function upsertNotificationDetails(
   redis: Redis,
   fid: number,
@@ -45,25 +71,48 @@ export async function upsertNotificationDetails(
 ) {
   const now = Math.floor(Date.now() / 1000)
   const cadence = cadenceHours()
+  const member = memberId(fid, appFid)
 
-  const rec: NotifRecord = {
+  const existing = await loadNotification(redis, member)
+  const nextSendAt = now + cadence * 60 * 60
+
+  const rec: NotifRecord = normalizeRecord({
+    ...(existing ?? ({} as any)),
     fid,
     appFid,
     token: details.token,
     url: details.url,
     cadenceHours: cadence,
-    nextSendAt: now + cadence * 60 * 60,
-  }
+    nextSendAt,
+    enabled: true,
+    enabledAt: existing?.enabledAt ?? now,
+    disabledAt: undefined,
+    updatedAt: now,
+  })
 
   await redis.set(NOTIF_KEYS.user(fid, appFid), JSON.stringify(rec))
-  await redis.zadd(NOTIF_KEYS.dueZ, { score: rec.nextSendAt, member: memberId(fid, appFid) })
+  await redis.zadd(NOTIF_KEYS.dueZ, { score: rec.nextSendAt, member })
 
   return rec
 }
 
 export async function disableNotifications(redis: Redis, fid: number, appFid: number) {
-  await redis.del(NOTIF_KEYS.user(fid, appFid))
-  await redis.zrem(NOTIF_KEYS.dueZ, memberId(fid, appFid))
+  const now = Math.floor(Date.now() / 1000)
+  const member = memberId(fid, appFid)
+
+  const existing = await loadNotification(redis, member)
+  if (existing) {
+    const rec: NotifRecord = normalizeRecord({
+      ...existing,
+      enabled: false,
+      disabledAt: now,
+      updatedAt: now,
+    })
+    await redis.set(NOTIF_KEYS.user(fid, appFid), JSON.stringify(rec))
+  }
+
+  // Always remove from schedule
+  await redis.zrem(NOTIF_KEYS.dueZ, member)
 }
 
 export async function loadNotification(redis: Redis, member: string) {
@@ -74,7 +123,8 @@ export async function loadNotification(redis: Redis, member: string) {
   const raw = await redis.get(NOTIF_KEYS.user(fid, appFid))
   if (!raw) return null
   try {
-    return JSON.parse(String(raw)) as NotifRecord
+    const parsed = JSON.parse(String(raw)) as NotifRecord
+    return normalizeRecord(parsed)
   } catch {
     return null
   }
@@ -82,9 +132,34 @@ export async function loadNotification(redis: Redis, member: string) {
 
 export async function markSent(redis: Redis, rec: NotifRecord, now: number) {
   const next = now + rec.cadenceHours * 60 * 60
-  const updated: NotifRecord = { ...rec, nextSendAt: next }
+  const updated: NotifRecord = normalizeRecord({
+    ...rec,
+    nextSendAt: next,
+    sentCount: (rec.sentCount ?? 0) + 1,
+    lastSentAt: now,
+    updatedAt: now,
+    lastError: undefined,
+  })
   await redis.set(NOTIF_KEYS.user(rec.fid, rec.appFid), JSON.stringify(updated))
   await redis.zadd(NOTIF_KEYS.dueZ, { score: next, member: memberId(rec.fid, rec.appFid) })
+  return updated
+}
+
+export async function markOpened(redis: Redis, fid: number, appFid: number, now: number, meta?: any) {
+  const member = memberId(fid, appFid)
+  const rec = await loadNotification(redis, member)
+  if (!rec) return null
+
+  const updated: NotifRecord = normalizeRecord({
+    ...rec,
+    openedCount: (rec.openedCount ?? 0) + 1,
+    lastOpenedAt: now,
+    updatedAt: now,
+  })
+
+  await redis.set(NOTIF_KEYS.user(fid, appFid), JSON.stringify(updated))
+  await pushEvent(redis, { ts: Date.now(), type: 'notification_opened', data: { fid, appFid, ...(meta ?? {}) } })
+
   return updated
 }
 
@@ -97,7 +172,15 @@ export async function getDueMembers(redis: Redis, now: number, maxScan: number =
   try {
     // @ts-ignore - byScore is supported in newer @upstash/redis
     const members = await redis.zrange(NOTIF_KEYS.dueZ, 0, now, { byScore: true, offset: 0, count: maxScan })
-    return members.map((m: any) => String(m))
+    // Filter disabled records (in case schedule wasn't cleaned)
+    const out: string[] = []
+    for (const m of members) {
+      const member = String(m)
+      const rec = await loadNotification(redis, member)
+      if (rec?.enabled === false) continue
+      out.push(member)
+    }
+    return out
   } catch {
     // Fallback: grab the earliest N scheduled and filter by nextSendAt stored in the record.
     const earliest = await redis.zrange(NOTIF_KEYS.dueZ, 0, maxScan - 1)
@@ -106,6 +189,7 @@ export async function getDueMembers(redis: Redis, now: number, maxScan: number =
       const member = String(m)
       const rec = await loadNotification(redis, member)
       if (!rec) continue
+      if (rec.enabled === false) continue
       if (rec.nextSendAt <= now) due.push(member)
     }
     return due
@@ -154,8 +238,9 @@ export async function rescheduleAll(redis: Redis, hours: number) {
     const member = String(m)
     const rec = await loadNotification(redis, member)
     if (!rec) continue
+    if (rec.enabled === false) continue
     const nextSendAt = now + cadence * 60 * 60
-    const newRec: NotifRecord = { ...rec, cadenceHours: cadence, nextSendAt }
+    const newRec: NotifRecord = normalizeRecord({ ...rec, cadenceHours: cadence, nextSendAt, updatedAt: now })
     await redis.set(NOTIF_KEYS.user(rec.fid, rec.appFid), JSON.stringify(newRec))
     await redis.zadd(NOTIF_KEYS.dueZ, { score: nextSendAt, member })
     updated++
