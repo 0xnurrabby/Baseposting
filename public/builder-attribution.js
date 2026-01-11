@@ -1,6 +1,6 @@
 import { Attribution } from "https://esm.sh/ox/erc8021";
 
-const BUILDER_CODE = "bc_at63kbxx";
+const BUILDER_CODE = "bc_qezw5bnz";
 
 const dataSuffix = Attribution.toDataSuffix({
   codes: [BUILDER_CODE]
