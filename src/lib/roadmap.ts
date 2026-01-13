@@ -60,7 +60,7 @@ export const ROADMAP: RoadmapItem[] = [
     date: '04.01.2026',
     title: 'Collecting user Feedback',
     text: 'Started collecting user feedback to understand pain points, prioritize the next improvements, and shape upcoming updates based on real usage. Send me a message on Telegram: @nurrabby with your feedback and ideas.',
-    tone: 'reed',
+    tone: 'red',
   },
     {
     id: '2026-01-03-dark-and-light-theme',
