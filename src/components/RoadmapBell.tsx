@@ -77,7 +77,7 @@ function ChevronIcon({ size = 16 }: { size?: number }) {
 export function RoadmapBell() {
   const items = (ROADMAP as unknown as RoadmapItem[]) ?? [];
 
-  // latest = array top item (newest upore rakhle best)
+  // newest item should be first (top)
   const latest = items[0];
   const latestSig = useMemo(() => {
     if (!latest) return "none";
@@ -94,7 +94,7 @@ export function RoadmapBell() {
     const seen = safeGet(STORAGE_KEY);
     setHasUnseen(seen !== latestSig);
 
-    // Auto detect dark mode (Farcaster webview friendly)
+    // auto detect dark mode
     try {
       const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
       const apply = () => setIsDark(Boolean(mq?.matches));
@@ -124,7 +124,7 @@ export function RoadmapBell() {
   const toggleOpen = () => {
     setOpen((v) => {
       const next = !v;
-      if (next) markSeen(); // open kore dekhlei seen
+      if (next) markSeen();
       return next;
     });
   };
@@ -133,14 +133,19 @@ export function RoadmapBell() {
   const safeRight = "calc(14px + env(safe-area-inset-right))";
   const safeBottom = "calc(14px + env(safe-area-inset-bottom))";
 
-  // theme styles (fixes “extra lighting” + dark close button)
-  const backdropBg = isDark ? "rgba(0,0,0,0.62)" : "rgba(0,0,0,0.35)"; // light mode-e ektu dark korlam so “lighting” feel kombe
+  // theme styles
+  const backdropBg = isDark ? "rgba(0,0,0,0.62)" : "rgba(0,0,0,0.35)";
   const panelBg = isDark ? "rgba(15, 23, 42, 0.92)" : "rgba(255,255,255,0.92)";
   const panelText = isDark ? "#E5E7EB" : "#0F172A";
   const subText = isDark ? "rgba(226,232,240,0.72)" : "rgba(100,116,139,0.85)";
   const ring = isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)";
   const closeBg = isDark ? "rgba(255,255,255,0.10)" : "rgba(15,23,42,0.06)";
   const closeFg = isDark ? "rgba(255,255,255,0.90)" : "rgba(15,23,42,0.85)";
+
+  // 🔥 Perfect blue rail colors (light + dark)
+  const railMid = isDark ? "rgba(147,197,253,0.55)" : "rgba(59,130,246,0.40)";
+  const railFade = isDark ? "rgba(147,197,253,0.00)" : "rgba(59,130,246,0.00)";
+  const railSoft = isDark ? "rgba(147,197,253,0.22)" : "rgba(59,130,246,0.16)";
 
   const bell = (
     <div
@@ -161,11 +166,7 @@ export function RoadmapBell() {
           backgroundColor: isDark ? "rgba(15,23,42,0.88)" : "rgba(255,255,255,0.90)",
           border: `1px solid ${ring}`,
         }}
-        animate={
-          hasUnseen
-            ? { rotate: [0, -6, 6, -4, 4, 0] }
-            : { rotate: 0 }
-        }
+        animate={hasUnseen ? { rotate: [0, -6, 6, -4, 4, 0] } : { rotate: 0 }}
         transition={
           hasUnseen
             ? { duration: 0.9, repeat: Infinity, repeatDelay: 1.4, ease: "easeInOut" }
@@ -181,9 +182,7 @@ export function RoadmapBell() {
           className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full"
           style={{
             backgroundColor: hasUnseen ? "#F43F5E" : "#10B981",
-            boxShadow: isDark
-              ? "0 0 0 2px rgba(15,23,42,1)"
-              : "0 0 0 2px rgba(255,255,255,1)",
+            boxShadow: isDark ? "0 0 0 2px rgba(15,23,42,1)" : "0 0 0 2px rgba(255,255,255,1)",
           }}
         />
 
@@ -210,7 +209,7 @@ export function RoadmapBell() {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
         >
-          {/* backdrop (no extra “white lighting”) */}
+          {/* backdrop */}
           <button
             type="button"
             aria-label="Close updates"
@@ -258,7 +257,7 @@ export function RoadmapBell() {
                     </div>
                   </div>
 
-                  {/* beautiful close button (dark mode fixed) */}
+                  {/* close */}
                   <button
                     type="button"
                     onClick={() => setOpen(false)}
@@ -287,10 +286,13 @@ export function RoadmapBell() {
                     touchAction: "pan-y",
                   }}
                 >
-                  {/* left subtle rail */}
+                  {/* ✅ Connected blue rail (no more ugly dag) */}
                   <div
-                    className="absolute left-6 top-4 bottom-4 w-px"
-                    style={{ backgroundColor: isDark ? "rgba(255,255,255,0.10)" : "rgba(15,23,42,0.10)" }}
+                    className="absolute top-4 bottom-4 w-px"
+                    style={{
+                      left: "26px",
+                      background: `linear-gradient(to bottom, ${railFade}, ${railMid}, ${railFade})`,
+                    }}
                   />
 
                   <div className="space-y-3">
@@ -321,15 +323,27 @@ export function RoadmapBell() {
                       const markerFg = tone === "red" ? "#FB7185" : "#34D399";
 
                       return (
-                        <div key={it.id} className="relative pl-10">
-                          {/* arrow marker */}
-                          <div className="absolute left-2 top-4 flex items-center gap-1">
+                        <div key={it.id} className="relative pl-12">
+                          {/* ✅ Arrow marker + connector to rail */}
+                          <div className="absolute left-2 top-4 flex items-center">
+                            {/* connector from rail to arrow (blue, theme-safe) */}
+                            <div
+                              className="mr-2 h-px"
+                              style={{
+                                width: "14px",
+                                background: `linear-gradient(to right, ${railMid}, ${railSoft})`,
+                              }}
+                            />
+
                             <div
                               className="grid h-7 w-7 place-items-center rounded-xl"
                               style={{
                                 backgroundColor: markerBg,
                                 color: markerFg,
                                 border: `1px solid ${ring}`,
+                                boxShadow: isDark
+                                  ? "0 10px 18px rgba(0,0,0,0.35)"
+                                  : "0 10px 18px rgba(0,0,0,0.10)",
                               }}
                             >
                               <ChevronIcon />
@@ -348,9 +362,7 @@ export function RoadmapBell() {
                                 <div className="text-[12px] font-medium" style={{ color: subText }}>
                                   {it.date}
                                 </div>
-                                <div className="mt-0.5 text-[15px] font-semibold">
-                                  {it.title}
-                                </div>
+                                <div className="mt-0.5 text-[15px] font-semibold">{it.title}</div>
                               </div>
 
                               <div
@@ -361,7 +373,12 @@ export function RoadmapBell() {
                               </div>
                             </div>
 
-                            <div className="mt-2 text-[13.5px] leading-relaxed" style={{ color: isDark ? "rgba(226,232,240,0.88)" : "rgba(51,65,85,0.95)" }}>
+                            <div
+                              className="mt-2 text-[13.5px] leading-relaxed"
+                              style={{
+                                color: isDark ? "rgba(226,232,240,0.88)" : "rgba(51,65,85,0.95)",
+                              }}
+                            >
                               {it.text}
                             </div>
                           </div>
@@ -371,7 +388,10 @@ export function RoadmapBell() {
                   </div>
                 </div>
 
-                <div className="mt-3 text-[12px]" style={{ color: isDark ? "rgba(148,163,184,0.85)" : "rgba(100,116,139,0.75)" }}>
+                <div
+                  className="mt-3 text-[12px]"
+                  style={{ color: isDark ? "rgba(148,163,184,0.85)" : "rgba(100,116,139,0.75)" }}
+                >
                   Tip: Add new updates by editing <span className="font-mono">src/lib/roadmap.ts</span>
                 </div>
               </div>
