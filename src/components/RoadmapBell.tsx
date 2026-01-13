@@ -33,14 +33,12 @@ function getDarkNow() {
   try {
     const el = document.documentElement;
     const body = document.body;
-    // class based
+
     if (el?.classList?.contains("dark") || body?.classList?.contains("dark")) return true;
 
-    // attribute based
     const dt = el?.getAttribute?.("data-theme") || body?.getAttribute?.("data-theme");
     if (dt && dt.toLowerCase().includes("dark")) return true;
 
-    // fallback
     return !!window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
   } catch {
     return false;
@@ -80,7 +78,6 @@ function ChevronIcon({ size = 16 }: { size?: number }) {
 export function RoadmapBell() {
   const items = (ROADMAP as unknown as RoadmapItem[]) ?? [];
 
-  // newest item should be first
   const latest = items[0];
   const latestSig = useMemo(() => {
     if (!latest) return "none";
@@ -99,7 +96,6 @@ export function RoadmapBell() {
     const seen = safeGet(STORAGE_KEY);
     setHasUnseen(seen !== latestSig);
 
-    // system scheme changes
     let mq: MediaQueryList | null = null;
     const onMQ = () => setIsDark(getDarkNow());
     try {
@@ -109,7 +105,6 @@ export function RoadmapBell() {
       // ignore
     }
 
-    // class/data-theme changes (Farcaster toggle)
     const mo = new MutationObserver(() => setIsDark(getDarkNow()));
     try {
       mo.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
@@ -132,7 +127,6 @@ export function RoadmapBell() {
     };
   }, [latestSig]);
 
-  // body scroll lock when open
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
@@ -155,11 +149,9 @@ export function RoadmapBell() {
     });
   };
 
-  // safe-area position
   const safeRight = "calc(14px + env(safe-area-inset-right))";
   const safeBottom = "calc(14px + env(safe-area-inset-bottom))";
 
-  // Theme tokens
   const backdropBg = isDark ? "rgba(0,0,0,0.66)" : "rgba(0,0,0,0.36)";
   const panelBg = isDark ? "rgba(2, 6, 23, 0.92)" : "rgba(255,255,255,0.94)";
   const panelText = isDark ? "rgba(226,232,240,0.95)" : "rgba(15,23,42,0.95)";
@@ -168,9 +160,8 @@ export function RoadmapBell() {
   const closeBg = isDark ? "rgba(255,255,255,0.10)" : "rgba(15,23,42,0.06)";
   const closeFg = isDark ? "rgba(255,255,255,0.92)" : "rgba(15,23,42,0.86)";
 
-  // Blue rail colors
   const blueMid = isDark ? "rgba(147,197,253,0.55)" : "rgba(59,130,246,0.42)";
-  const blueSoft = isDark ? "rgba(147,197,253,0.20)" : "rgba(59,130,246,0.16)";
+  const blueSoft = isDark ? "rgba(147,197,253,0.22)" : "rgba(59,130,246,0.18)";
   const blueFade = "rgba(59,130,246,0.00)";
 
   const bell = (
@@ -192,7 +183,6 @@ export function RoadmapBell() {
           <BellIcon />
         </span>
 
-        {/* status dot */}
         <span
           className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full"
           style={{
@@ -201,7 +191,6 @@ export function RoadmapBell() {
           }}
         />
 
-        {/* subtle halo */}
         {hasUnseen ? (
           <motion.span
             className="absolute inset-0 rounded-2xl"
@@ -218,7 +207,6 @@ export function RoadmapBell() {
     <AnimatePresence>
       {open ? (
         <motion.div key="overlay" className="fixed inset-0 z-[10000]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-          {/* Backdrop */}
           <button type="button" aria-label="Close updates" onClick={() => setOpen(false)} className="absolute inset-0" style={{ backgroundColor: backdropBg }} />
 
           <div
@@ -245,7 +233,6 @@ export function RoadmapBell() {
               role="dialog"
               aria-modal="true"
             >
-              {/* Header */}
               <div className="relative px-5 pt-4 pb-3">
                 <div className="mx-auto mb-2 h-1.5 w-10 rounded-full" style={{ backgroundColor: isDark ? "rgba(255,255,255,0.12)" : "rgba(15,23,42,0.10)" }} />
                 <div className="flex items-start justify-between gap-3">
@@ -272,7 +259,6 @@ export function RoadmapBell() {
                 </div>
               </div>
 
-              {/* Content */}
               <div className="px-4 pb-4">
                 <div
                   className="relative max-h-[62vh] overflow-y-auto rounded-2xl p-3"
@@ -284,25 +270,25 @@ export function RoadmapBell() {
                     touchAction: "pan-y",
                   }}
                 >
-                  {/* Timeline (L-branch arrows like your sketch) */}
+                  {/* Timeline (fix: rail now spans FULL content height) */}
                   {(() => {
-                    // Layout constants (px)
-                    const RAIL_LEFT = 22; // main vertical line x
-                    const BRANCH_W = 26; // horizontal branch length
-                    const ARROW_SIZE = 28; // arrow bubble size
-                    const GAP_AFTER_ARROW = 14; // gap between arrow and card
+                    const RAIL_LEFT = 22;
+                    const BRANCH_W = 26;
+                    const ARROW_SIZE = 28;
+                    const GAP_AFTER_ARROW = 14;
 
-                    // Derived positions
-                    const ARROW_LEFT = RAIL_LEFT + BRANCH_W - ARROW_SIZE / 2; // arrow center on branch end
-                    const ITEM_PL = ARROW_LEFT + ARROW_SIZE + GAP_AFTER_ARROW; // card left padding
+                    const ARROW_LEFT = RAIL_LEFT + BRANCH_W - ARROW_SIZE / 2;
+                    const ITEM_PL = ARROW_LEFT + ARROW_SIZE + GAP_AFTER_ARROW;
 
                     return (
-                      <>
-                        {/* main vertical rail */}
+                      <div className="relative" style={{ paddingTop: "8px", paddingBottom: "8px" }}>
+                        {/* rail spans wrapper height (content height) */}
                         <div
-                          className="absolute top-4 bottom-4"
+                          className="absolute"
                           style={{
                             left: `${RAIL_LEFT}px`,
+                            top: 0,
+                            bottom: 0,
                             width: "2px",
                             borderRadius: "999px",
                             background: `linear-gradient(to bottom, ${blueFade}, ${blueMid}, ${blueFade})`,
@@ -312,7 +298,10 @@ export function RoadmapBell() {
                         <div className="space-y-3">
                           {items.map((it, idx) => {
                             const tone: Tone = (it.tone ?? "green") as Tone;
-                            const isLatest = idx === 0 && tone === "red";
+
+                            const isLatest = idx === 0;
+                            const badgeLabel =
+                              tone === "green" ? "Done" : isLatest ? "Latest" : "In progress"; // ✅ fixed
 
                             const cardBg =
                               tone === "red"
@@ -345,7 +334,7 @@ export function RoadmapBell() {
                                   minHeight: "92px",
                                 }}
                               >
-                                {/* horizontal branch from rail -> arrow */}
+                                {/* branch always blue */}
                                 <div
                                   className="absolute"
                                   style={{
@@ -359,7 +348,6 @@ export function RoadmapBell() {
                                   }}
                                 />
 
-                                {/* arrow bubble at branch end */}
                                 <div
                                   className="absolute grid place-items-center rounded-xl"
                                   style={{
@@ -376,7 +364,6 @@ export function RoadmapBell() {
                                   <ChevronIcon />
                                 </div>
 
-                                {/* card */}
                                 <div className="relative rounded-2xl px-4 py-3 shadow-sm" style={{ backgroundColor: cardBg, border: `1px solid ${ring}` }}>
                                   <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">
@@ -386,8 +373,11 @@ export function RoadmapBell() {
                                       <div className="mt-0.5 text-[15px] font-semibold">{it.title}</div>
                                     </div>
 
-                                    <div className="shrink-0 rounded-full px-3 py-1 text-[12px] font-semibold shadow-sm" style={{ backgroundColor: badgeBg, color: "white" }}>
-                                      {isLatest ? "Latest" : "Done"}
+                                    <div
+                                      className="shrink-0 rounded-full px-3 py-1 text-[12px] font-semibold shadow-sm"
+                                      style={{ backgroundColor: badgeBg, color: "white" }}
+                                    >
+                                      {badgeLabel}
                                     </div>
                                   </div>
 
@@ -399,7 +389,7 @@ export function RoadmapBell() {
                             );
                           })}
                         </div>
-                      </>
+                      </div>
                     );
                   })()}
                 </div>
