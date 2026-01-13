@@ -394,9 +394,13 @@ export function RoadmapBell() {
                   })()}
                 </div>
 
-                <div className="mt-3 text-[12px]" style={{ color: isDark ? "rgba(148,163,184,0.85)" : "rgba(100,116,139,0.75)" }}>
-                  Tip: Add new updates by editing <span className="font-mono">src/lib/roadmap.ts</span>
-                </div>
+               <div
+  className="mt-3 text-[12px] font-medium"
+  style={{ color: isDark ? "rgba(226,232,240,0.75)" : "rgba(51,65,85,0.65)" }}
+>
+  Support me guys 💙
+</div>
+
               </div>
             </motion.div>
           </div>
