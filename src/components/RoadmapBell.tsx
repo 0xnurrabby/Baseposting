@@ -29,14 +29,26 @@ function safeSet(key: string, val: string) {
   }
 }
 
+function getDarkNow() {
+  try {
+    const el = document.documentElement;
+    const body = document.body;
+    // Tailwind / app class based dark mode
+    if (el?.classList?.contains("dark") || body?.classList?.contains("dark")) return true;
+    // If app uses data-theme
+    const dt = el?.getAttribute?.("data-theme") || body?.getAttribute?.("data-theme");
+    if (dt && dt.toLowerCase().includes("dark")) return true;
+    // Fallback
+    return !!window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
+  } catch {
+    return false;
+  }
+}
+
 function BellIcon({ size = 22 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M12 22a2.2 2.2 0 0 0 2.2-2.2h-4.4A2.2 2.2 0 0 0 12 22Z"
-        fill="currentColor"
-        opacity="0.9"
-      />
+      <path d="M12 22a2.2 2.2 0 0 0 2.2-2.2h-4.4A2.2 2.2 0 0 0 12 22Z" fill="currentColor" opacity="0.9" />
       <path
         d="M18 16.4V11a6 6 0 0 0-12 0v5.4L4.6 18a1 1 0 0 0 .8 1.6h13.2a1 1 0 0 0 .8-1.6L18 16.4Z"
         stroke="currentColor"
@@ -50,12 +62,7 @@ function BellIcon({ size = 22 }: { size?: number }) {
 function CloseIcon({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M6 6l12 12M18 6L6 18"
-        stroke="currentColor"
-        strokeWidth="1.9"
-        strokeLinecap="round"
-      />
+      <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
     </svg>
   );
 }
@@ -63,13 +70,7 @@ function CloseIcon({ size = 18 }: { size?: number }) {
 function ChevronIcon({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M9 6l6 6-6 6"
-        stroke="currentColor"
-        strokeWidth="1.9"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -77,7 +78,6 @@ function ChevronIcon({ size = 16 }: { size?: number }) {
 export function RoadmapBell() {
   const items = (ROADMAP as unknown as RoadmapItem[]) ?? [];
 
-  // newest item should be first (top)
   const latest = items[0];
   const latestSig = useMemo(() => {
     if (!latest) return "none";
@@ -91,19 +91,42 @@ export function RoadmapBell() {
 
   useEffect(() => {
     setMounted(true);
+    setIsDark(getDarkNow());
+
     const seen = safeGet(STORAGE_KEY);
     setHasUnseen(seen !== latestSig);
 
-    // auto detect dark mode
+    // Update on system scheme change
+    let mq: MediaQueryList | null = null;
+    const onMQ = () => setIsDark(getDarkNow());
     try {
-      const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
-      const apply = () => setIsDark(Boolean(mq?.matches));
-      apply();
-      mq?.addEventListener?.("change", apply);
-      return () => mq?.removeEventListener?.("change", apply);
+      mq = window.matchMedia?.("(prefers-color-scheme: dark)") ?? null;
+      mq?.addEventListener?.("change", onMQ);
     } catch {
       // ignore
     }
+
+    // Update on html/body class/theme attribute change (Farcaster toggle)
+    const mo = new MutationObserver(() => setIsDark(getDarkNow()));
+    try {
+      mo.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
+      mo.observe(document.body, { attributes: true, attributeFilter: ["class", "data-theme"] });
+    } catch {
+      // ignore
+    }
+
+    return () => {
+      try {
+        mq?.removeEventListener?.("change", onMQ);
+      } catch {
+        // ignore
+      }
+      try {
+        mo.disconnect();
+      } catch {
+        // ignore
+      }
+    };
   }, [latestSig]);
 
   // body scroll lock when open
@@ -133,29 +156,22 @@ export function RoadmapBell() {
   const safeRight = "calc(14px + env(safe-area-inset-right))";
   const safeBottom = "calc(14px + env(safe-area-inset-bottom))";
 
-  // theme styles
-  const backdropBg = isDark ? "rgba(0,0,0,0.62)" : "rgba(0,0,0,0.35)";
-  const panelBg = isDark ? "rgba(15, 23, 42, 0.92)" : "rgba(255,255,255,0.92)";
-  const panelText = isDark ? "#E5E7EB" : "#0F172A";
-  const subText = isDark ? "rgba(226,232,240,0.72)" : "rgba(100,116,139,0.85)";
+  // Theme tokens
+  const backdropBg = isDark ? "rgba(0,0,0,0.66)" : "rgba(0,0,0,0.36)";
+  const panelBg = isDark ? "rgba(2, 6, 23, 0.92)" : "rgba(255,255,255,0.94)";
+  const panelText = isDark ? "rgba(226,232,240,0.95)" : "rgba(15,23,42,0.95)";
+  const subText = isDark ? "rgba(148,163,184,0.90)" : "rgba(100,116,139,0.85)";
   const ring = isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)";
   const closeBg = isDark ? "rgba(255,255,255,0.10)" : "rgba(15,23,42,0.06)";
-  const closeFg = isDark ? "rgba(255,255,255,0.90)" : "rgba(15,23,42,0.85)";
+  const closeFg = isDark ? "rgba(255,255,255,0.92)" : "rgba(15,23,42,0.86)";
 
-  // 🔥 Perfect blue rail colors (light + dark)
-  const railMid = isDark ? "rgba(147,197,253,0.55)" : "rgba(59,130,246,0.40)";
-  const railFade = isDark ? "rgba(147,197,253,0.00)" : "rgba(59,130,246,0.00)";
-  const railSoft = isDark ? "rgba(147,197,253,0.22)" : "rgba(59,130,246,0.16)";
+  // Blue rail for both themes (softer light, icy dark)
+  const blueMid = isDark ? "rgba(147,197,253,0.55)" : "rgba(59,130,246,0.42)";
+  const blueSoft = isDark ? "rgba(147,197,253,0.20)" : "rgba(59,130,246,0.16)";
+  const blueFade = "rgba(59,130,246,0.00)";
 
   const bell = (
-    <div
-      style={{
-        position: "fixed",
-        right: safeRight,
-        bottom: safeBottom,
-        zIndex: 9999,
-      }}
-    >
+    <div style={{ position: "fixed", right: safeRight, bottom: safeBottom, zIndex: 9999 }}>
       <motion.button
         type="button"
         onClick={toggleOpen}
@@ -163,30 +179,24 @@ export function RoadmapBell() {
         whileTap={{ scale: 0.98 }}
         className="relative grid h-12 w-12 place-items-center rounded-2xl shadow-lg backdrop-blur-md"
         style={{
-          backgroundColor: isDark ? "rgba(15,23,42,0.88)" : "rgba(255,255,255,0.90)",
+          backgroundColor: isDark ? "rgba(2,6,23,0.86)" : "rgba(255,255,255,0.90)",
           border: `1px solid ${ring}`,
         }}
         animate={hasUnseen ? { rotate: [0, -6, 6, -4, 4, 0] } : { rotate: 0 }}
-        transition={
-          hasUnseen
-            ? { duration: 0.9, repeat: Infinity, repeatDelay: 1.4, ease: "easeInOut" }
-            : { duration: 0.2 }
-        }
+        transition={hasUnseen ? { duration: 0.9, repeat: Infinity, repeatDelay: 1.4, ease: "easeInOut" } : { duration: 0.2 }}
       >
         <span style={{ color: isDark ? "rgba(255,255,255,0.92)" : "rgba(15,23,42,0.90)" }}>
           <BellIcon />
         </span>
 
-        {/* status dot */}
         <span
           className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full"
           style={{
             backgroundColor: hasUnseen ? "#F43F5E" : "#10B981",
-            boxShadow: isDark ? "0 0 0 2px rgba(15,23,42,1)" : "0 0 0 2px rgba(255,255,255,1)",
+            boxShadow: isDark ? "0 0 0 2px rgba(2,6,23,1)" : "0 0 0 2px rgba(255,255,255,1)",
           }}
         />
 
-        {/* subtle halo */}
         {hasUnseen ? (
           <motion.span
             className="absolute inset-0 rounded-2xl"
@@ -202,14 +212,8 @@ export function RoadmapBell() {
   const overlay = (
     <AnimatePresence>
       {open ? (
-        <motion.div
-          key="overlay"
-          className="fixed inset-0 z-[10000]"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-        >
-          {/* backdrop */}
+        <motion.div key="overlay" className="fixed inset-0 z-[10000]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+          {/* Backdrop */}
           <button
             type="button"
             aria-label="Close updates"
@@ -218,7 +222,6 @@ export function RoadmapBell() {
             style={{ backgroundColor: backdropBg }}
           />
 
-          {/* sheet wrapper */}
           <div
             className="absolute inset-0 flex items-end justify-center"
             style={{
@@ -243,12 +246,9 @@ export function RoadmapBell() {
               role="dialog"
               aria-modal="true"
             >
-              {/* header */}
+              {/* Header */}
               <div className="relative px-5 pt-4 pb-3">
-                <div
-                  className="mx-auto mb-2 h-1.5 w-10 rounded-full"
-                  style={{ backgroundColor: isDark ? "rgba(255,255,255,0.12)" : "rgba(15,23,42,0.10)" }}
-                />
+                <div className="mx-auto mb-2 h-1.5 w-10 rounded-full" style={{ backgroundColor: isDark ? "rgba(255,255,255,0.12)" : "rgba(15,23,42,0.10)" }} />
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-[15px] font-semibold">Updates</div>
@@ -256,8 +256,6 @@ export function RoadmapBell() {
                       Roadmap & recent changes
                     </div>
                   </div>
-
-                  {/* close */}
                   <button
                     type="button"
                     onClick={() => setOpen(false)}
@@ -274,124 +272,131 @@ export function RoadmapBell() {
                 </div>
               </div>
 
-              {/* content */}
+              {/* Content */}
               <div className="px-4 pb-4">
                 <div
                   className="relative max-h-[62vh] overflow-y-auto rounded-2xl p-3"
                   style={{
-                    backgroundColor: isDark ? "rgba(2,6,23,0.22)" : "rgba(255,255,255,0.60)",
+                    backgroundColor: isDark ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.60)",
                     border: `1px solid ${ring}`,
                     WebkitOverflowScrolling: "touch",
                     overscrollBehavior: "contain",
                     touchAction: "pan-y",
                   }}
                 >
-                  {/* ✅ Connected blue rail (no more ugly dag) */}
-                  <div
-                    className="absolute top-4 bottom-4 w-px"
-                    style={{
-                      left: "26px",
-                      background: `linear-gradient(to bottom, ${railFade}, ${railMid}, ${railFade})`,
-                    }}
-                  />
+                  {/* Perfect timeline geometry */}
+                  {(() => {
+                    const RAIL_LEFT = 26; // px
+                    const MARKER_SIZE = 28; // px
+                    const MARKER_LEFT = RAIL_LEFT - MARKER_SIZE / 2; // centers on rail
+                    const ITEM_PL = 64; // px padding-left for cards
+                    const CONNECTOR_W = ITEM_PL - (MARKER_LEFT + MARKER_SIZE); // marker right -> card left
 
-                  <div className="space-y-3">
-                    {items.map((it, idx) => {
-                      const tone: Tone = (it.tone ?? "green") as Tone;
-                      const isLatest = idx === 0 && tone === "red";
+                    return (
+                      <>
+                        {/* Blue rail */}
+                        <div
+                          className="absolute top-4 bottom-4"
+                          style={{
+                            left: `${RAIL_LEFT}px`,
+                            width: "1px",
+                            background: `linear-gradient(to bottom, ${blueFade}, ${blueMid}, ${blueFade})`,
+                          }}
+                        />
 
-                      const cardBg =
-                        tone === "red"
-                          ? isDark
-                            ? "rgba(244,63,94,0.14)"
-                            : "rgba(255,241,242,0.92)"
-                          : isDark
-                            ? "rgba(16,185,129,0.14)"
-                            : "rgba(236,253,245,0.85)";
+                        <div className="space-y-3">
+                          {items.map((it, idx) => {
+                            const tone: Tone = (it.tone ?? "green") as Tone;
+                            const isLatest = idx === 0 && tone === "red";
 
-                      const badgeBg = tone === "red" ? "#F43F5E" : "#10B981";
+                            const cardBg =
+                              tone === "red"
+                                ? isDark
+                                  ? "rgba(244,63,94,0.14)"
+                                  : "rgba(255,241,242,0.92)"
+                                : isDark
+                                  ? "rgba(16,185,129,0.14)"
+                                  : "rgba(236,253,245,0.85)";
 
-                      const markerBg =
-                        tone === "red"
-                          ? isDark
-                            ? "rgba(244,63,94,0.22)"
-                            : "rgba(244,63,94,0.10)"
-                          : isDark
-                            ? "rgba(16,185,129,0.22)"
-                            : "rgba(16,185,129,0.10)";
+                            const badgeBg = tone === "red" ? "#F43F5E" : "#10B981";
 
-                      const markerFg = tone === "red" ? "#FB7185" : "#34D399";
+                            const markerBg =
+                              tone === "red"
+                                ? isDark
+                                  ? "rgba(244,63,94,0.22)"
+                                  : "rgba(244,63,94,0.10)"
+                                : isDark
+                                  ? "rgba(16,185,129,0.22)"
+                                  : "rgba(16,185,129,0.10)";
 
-                      return (
-                        <div key={it.id} className="relative pl-12">
-                          {/* ✅ Arrow marker + connector to rail */}
-                          <div className="absolute left-2 top-4 flex items-center">
-                            {/* connector from rail to arrow (blue, theme-safe) */}
-                            <div
-                              className="mr-2 h-px"
-                              style={{
-                                width: "14px",
-                                background: `linear-gradient(to right, ${railMid}, ${railSoft})`,
-                              }}
-                            />
+                            const markerFg = tone === "red" ? "#FB7185" : "#34D399";
 
-                            <div
-                              className="grid h-7 w-7 place-items-center rounded-xl"
-                              style={{
-                                backgroundColor: markerBg,
-                                color: markerFg,
-                                border: `1px solid ${ring}`,
-                                boxShadow: isDark
-                                  ? "0 10px 18px rgba(0,0,0,0.35)"
-                                  : "0 10px 18px rgba(0,0,0,0.10)",
-                              }}
-                            >
-                              <ChevronIcon />
-                            </div>
-                          </div>
-
-                          <div
-                            className="relative rounded-2xl px-4 py-3 shadow-sm"
-                            style={{
-                              backgroundColor: cardBg,
-                              border: `1px solid ${ring}`,
-                            }}
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <div className="text-[12px] font-medium" style={{ color: subText }}>
-                                  {it.date}
+                            return (
+                              <div key={it.id} className="relative" style={{ paddingLeft: `${ITEM_PL}px` }}>
+                                {/* Marker ON the rail */}
+                                <div
+                                  className="absolute"
+                                  style={{
+                                    left: `${MARKER_LEFT}px`,
+                                    top: "14px",
+                                    width: `${MARKER_SIZE}px`,
+                                    height: `${MARKER_SIZE}px`,
+                                  }}
+                                >
+                                  {/* connector: marker -> card (blue) */}
+                                  <div
+                                    className="absolute"
+                                    style={{
+                                      left: `${MARKER_SIZE}px`,
+                                      top: "50%",
+                                      width: `${CONNECTOR_W}px`,
+                                      height: "1px",
+                                      transform: "translateY(-0.5px)",
+                                      background: `linear-gradient(to right, ${blueMid}, ${blueSoft})`,
+                                    }}
+                                  />
+                                  <div
+                                    className="grid h-full w-full place-items-center rounded-xl"
+                                    style={{
+                                      backgroundColor: markerBg,
+                                      color: markerFg,
+                                      border: `1px solid ${ring}`,
+                                      boxShadow: isDark ? "0 10px 18px rgba(0,0,0,0.35)" : "0 10px 18px rgba(0,0,0,0.10)",
+                                    }}
+                                  >
+                                    <ChevronIcon />
+                                  </div>
                                 </div>
-                                <div className="mt-0.5 text-[15px] font-semibold">{it.title}</div>
-                              </div>
 
-                              <div
-                                className="shrink-0 rounded-full px-3 py-1 text-[12px] font-semibold shadow-sm"
-                                style={{ backgroundColor: badgeBg, color: "white" }}
-                              >
-                                {isLatest ? "Latest" : "Done"}
-                              </div>
-                            </div>
+                                {/* Card */}
+                                <div className="relative rounded-2xl px-4 py-3 shadow-sm" style={{ backgroundColor: cardBg, border: `1px solid ${ring}` }}>
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <div className="text-[12px] font-medium" style={{ color: subText }}>
+                                        {it.date}
+                                      </div>
+                                      <div className="mt-0.5 text-[15px] font-semibold">{it.title}</div>
+                                    </div>
 
-                            <div
-                              className="mt-2 text-[13.5px] leading-relaxed"
-                              style={{
-                                color: isDark ? "rgba(226,232,240,0.88)" : "rgba(51,65,85,0.95)",
-                              }}
-                            >
-                              {it.text}
-                            </div>
-                          </div>
+                                    <div className="shrink-0 rounded-full px-3 py-1 text-[12px] font-semibold shadow-sm" style={{ backgroundColor: badgeBg, color: "white" }}>
+                                      {isLatest ? "Latest" : "Done"}
+                                    </div>
+                                  </div>
+
+                                  <div className="mt-2 text-[13.5px] leading-relaxed" style={{ color: isDark ? "rgba(226,232,240,0.88)" : "rgba(51,65,85,0.95)" }}>
+                                    {it.text}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
-                      );
-                    })}
-                  </div>
+                      </>
+                    );
+                  })()}
                 </div>
 
-                <div
-                  className="mt-3 text-[12px]"
-                  style={{ color: isDark ? "rgba(148,163,184,0.85)" : "rgba(100,116,139,0.75)" }}
-                >
+                <div className="mt-3 text-[12px]" style={{ color: isDark ? "rgba(148,163,184,0.85)" : "rgba(100,116,139,0.75)" }}>
                   Tip: Add new updates by editing <span className="font-mono">src/lib/roadmap.ts</span>
                 </div>
               </div>
