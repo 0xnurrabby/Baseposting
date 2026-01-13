@@ -21,7 +21,6 @@ function safeGet(key: string) {
     return null;
   }
 }
-
 function safeSet(key: string, val: string) {
   try {
     if (typeof window !== "undefined") window.localStorage.setItem(key, val);
@@ -54,7 +53,7 @@ function CloseIcon({ size = 18 }: { size?: number }) {
       <path
         d="M6 6l12 12M18 6L6 18"
         stroke="currentColor"
-        strokeWidth="1.8"
+        strokeWidth="1.9"
         strokeLinecap="round"
       />
     </svg>
@@ -67,7 +66,7 @@ function ChevronIcon({ size = 16 }: { size?: number }) {
       <path
         d="M9 6l6 6-6 6"
         stroke="currentColor"
-        strokeWidth="1.8"
+        strokeWidth="1.9"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
@@ -78,7 +77,7 @@ function ChevronIcon({ size = 16 }: { size?: number }) {
 export function RoadmapBell() {
   const items = (ROADMAP as unknown as RoadmapItem[]) ?? [];
 
-  // latest = array top item (tumi roadmap.ts e newest upore rakhle best)
+  // latest = array top item (newest upore rakhle best)
   const latest = items[0];
   const latestSig = useMemo(() => {
     if (!latest) return "none";
@@ -88,11 +87,23 @@ export function RoadmapBell() {
   const [mounted, setMounted] = useState(false);
   const [open, setOpen] = useState(false);
   const [hasUnseen, setHasUnseen] = useState(false);
+  const [isDark, setIsDark] = useState(false);
 
   useEffect(() => {
     setMounted(true);
     const seen = safeGet(STORAGE_KEY);
     setHasUnseen(seen !== latestSig);
+
+    // Auto detect dark mode (Farcaster webview friendly)
+    try {
+      const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
+      const apply = () => setIsDark(Boolean(mq?.matches));
+      apply();
+      mq?.addEventListener?.("change", apply);
+      return () => mq?.removeEventListener?.("change", apply);
+    } catch {
+      // ignore
+    }
   }, [latestSig]);
 
   // body scroll lock when open
@@ -118,9 +129,18 @@ export function RoadmapBell() {
     });
   };
 
-  // position with safe-area (Farcaster webview friendly)
+  // safe-area position
   const safeRight = "calc(14px + env(safe-area-inset-right))";
   const safeBottom = "calc(14px + env(safe-area-inset-bottom))";
+
+  // theme styles (fixes “extra lighting” + dark close button)
+  const backdropBg = isDark ? "rgba(0,0,0,0.62)" : "rgba(0,0,0,0.35)"; // light mode-e ektu dark korlam so “lighting” feel kombe
+  const panelBg = isDark ? "rgba(15, 23, 42, 0.92)" : "rgba(255,255,255,0.92)";
+  const panelText = isDark ? "#E5E7EB" : "#0F172A";
+  const subText = isDark ? "rgba(226,232,240,0.72)" : "rgba(100,116,139,0.85)";
+  const ring = isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)";
+  const closeBg = isDark ? "rgba(255,255,255,0.10)" : "rgba(15,23,42,0.06)";
+  const closeFg = isDark ? "rgba(255,255,255,0.90)" : "rgba(15,23,42,0.85)";
 
   const bell = (
     <div
@@ -134,14 +154,16 @@ export function RoadmapBell() {
       <motion.button
         type="button"
         onClick={toggleOpen}
-        className="relative grid h-12 w-12 place-items-center rounded-2xl bg-white/90 shadow-lg ring-1 ring-black/5 backdrop-blur-md active:scale-[0.98]"
         aria-label="Updates"
         whileTap={{ scale: 0.98 }}
+        className="relative grid h-12 w-12 place-items-center rounded-2xl shadow-lg backdrop-blur-md"
+        style={{
+          backgroundColor: isDark ? "rgba(15,23,42,0.88)" : "rgba(255,255,255,0.90)",
+          border: `1px solid ${ring}`,
+        }}
         animate={
           hasUnseen
-            ? {
-                rotate: [0, -6, 6, -4, 4, 0],
-              }
+            ? { rotate: [0, -6, 6, -4, 4, 0] }
             : { rotate: 0 }
         }
         transition={
@@ -150,23 +172,27 @@ export function RoadmapBell() {
             : { duration: 0.2 }
         }
       >
-        <span className="text-slate-800">
+        <span style={{ color: isDark ? "rgba(255,255,255,0.92)" : "rgba(15,23,42,0.90)" }}>
           <BellIcon />
         </span>
 
-        {/* status dot (red = unseen, green = seen) */}
+        {/* status dot */}
         <span
-          className={[
-            "absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full ring-2 ring-white",
-            hasUnseen ? "bg-rose-500" : "bg-emerald-500",
-          ].join(" ")}
+          className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full"
+          style={{
+            backgroundColor: hasUnseen ? "#F43F5E" : "#10B981",
+            boxShadow: isDark
+              ? "0 0 0 2px rgba(15,23,42,1)"
+              : "0 0 0 2px rgba(255,255,255,1)",
+          }}
         />
 
-        {/* subtle halo (not annoying) */}
+        {/* subtle halo */}
         {hasUnseen ? (
           <motion.span
-            className="absolute inset-0 rounded-2xl ring-1 ring-rose-500/20"
-            animate={{ opacity: [0.25, 0.5, 0.25] }}
+            className="absolute inset-0 rounded-2xl"
+            style={{ boxShadow: "0 0 0 1px rgba(244,63,94,0.18)" }}
+            animate={{ opacity: [0.22, 0.45, 0.22] }}
             transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
           />
         ) : null}
@@ -184,15 +210,16 @@ export function RoadmapBell() {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
         >
-          {/* backdrop */}
+          {/* backdrop (no extra “white lighting”) */}
           <button
             type="button"
             aria-label="Close updates"
             onClick={() => setOpen(false)}
-            className="absolute inset-0 bg-black/25"
+            className="absolute inset-0"
+            style={{ backgroundColor: backdropBg }}
           />
 
-          {/* sheet wrapper (keeps inside viewport always) */}
+          {/* sheet wrapper */}
           <div
             className="absolute inset-0 flex items-end justify-center"
             style={{
@@ -203,8 +230,14 @@ export function RoadmapBell() {
             }}
           >
             <motion.div
-              className="w-full max-w-[520px] overflow-hidden rounded-3xl bg-white/92 shadow-2xl ring-1 ring-black/5 backdrop-blur-xl"
-              initial={{ y: 24, scale: 0.985, opacity: 0 }}
+              className="w-full max-w-[520px] overflow-hidden rounded-3xl shadow-2xl"
+              style={{
+                backgroundColor: panelBg,
+                color: panelText,
+                border: `1px solid ${ring}`,
+                backdropFilter: "blur(14px)",
+              }}
+              initial={{ y: 26, scale: 0.985, opacity: 0 }}
               animate={{ y: 0, scale: 1, opacity: 1 }}
               exit={{ y: 20, scale: 0.99, opacity: 0 }}
               transition={{ type: "spring", stiffness: 260, damping: 26 }}
@@ -213,17 +246,29 @@ export function RoadmapBell() {
             >
               {/* header */}
               <div className="relative px-5 pt-4 pb-3">
-                <div className="mx-auto mb-2 h-1.5 w-10 rounded-full bg-black/10" />
+                <div
+                  className="mx-auto mb-2 h-1.5 w-10 rounded-full"
+                  style={{ backgroundColor: isDark ? "rgba(255,255,255,0.12)" : "rgba(15,23,42,0.10)" }}
+                />
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="text-[15px] font-semibold text-slate-900">Updates</div>
-                    <div className="text-[12.5px] text-slate-500">Roadmap & recent changes</div>
+                    <div className="text-[15px] font-semibold">Updates</div>
+                    <div className="text-[12.5px]" style={{ color: subText }}>
+                      Roadmap & recent changes
+                    </div>
                   </div>
+
+                  {/* beautiful close button (dark mode fixed) */}
                   <button
                     type="button"
                     onClick={() => setOpen(false)}
-                    className="grid h-9 w-9 place-items-center rounded-xl bg-black/5 text-slate-700 active:scale-[0.98]"
                     aria-label="Close"
+                    className="grid h-10 w-10 place-items-center rounded-2xl active:scale-[0.98]"
+                    style={{
+                      backgroundColor: closeBg,
+                      color: closeFg,
+                      border: `1px solid ${ring}`,
+                    }}
                   >
                     <CloseIcon />
                   </button>
@@ -233,70 +278,90 @@ export function RoadmapBell() {
               {/* content */}
               <div className="px-4 pb-4">
                 <div
-                  className="relative max-h-[62vh] overflow-y-auto rounded-2xl bg-white/60 p-3 ring-1 ring-black/5"
+                  className="relative max-h-[62vh] overflow-y-auto rounded-2xl p-3"
                   style={{
+                    backgroundColor: isDark ? "rgba(2,6,23,0.22)" : "rgba(255,255,255,0.60)",
+                    border: `1px solid ${ring}`,
                     WebkitOverflowScrolling: "touch",
                     overscrollBehavior: "contain",
                     touchAction: "pan-y",
                   }}
                 >
                   {/* left subtle rail */}
-                  <div className="absolute left-6 top-4 bottom-4 w-px bg-black/10" />
+                  <div
+                    className="absolute left-6 top-4 bottom-4 w-px"
+                    style={{ backgroundColor: isDark ? "rgba(255,255,255,0.10)" : "rgba(15,23,42,0.10)" }}
+                  />
 
                   <div className="space-y-3">
                     {items.map((it, idx) => {
                       const tone: Tone = (it.tone ?? "green") as Tone;
                       const isLatest = idx === 0 && tone === "red";
 
-                      // minimal professional colors
-                      const cardBase =
-                        "relative rounded-2xl px-4 py-3 shadow-sm ring-1 ring-black/5";
-                      const cardTone =
+                      const cardBg =
                         tone === "red"
-                          ? "bg-rose-50/90"
-                          : "bg-emerald-50/80";
+                          ? isDark
+                            ? "rgba(244,63,94,0.14)"
+                            : "rgba(255,241,242,0.92)"
+                          : isDark
+                            ? "rgba(16,185,129,0.14)"
+                            : "rgba(236,253,245,0.85)";
 
-                      const badgeTone =
+                      const badgeBg = tone === "red" ? "#F43F5E" : "#10B981";
+
+                      const markerBg =
                         tone === "red"
-                          ? "bg-rose-600 text-white"
-                          : "bg-emerald-600 text-white";
+                          ? isDark
+                            ? "rgba(244,63,94,0.22)"
+                            : "rgba(244,63,94,0.10)"
+                          : isDark
+                            ? "rgba(16,185,129,0.22)"
+                            : "rgba(16,185,129,0.10)";
+
+                      const markerFg = tone === "red" ? "#FB7185" : "#34D399";
 
                       return (
                         <div key={it.id} className="relative pl-10">
                           {/* arrow marker */}
                           <div className="absolute left-2 top-4 flex items-center gap-1">
                             <div
-                              className={[
-                                "grid h-7 w-7 place-items-center rounded-xl ring-1 ring-black/5",
-                                tone === "red" ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700",
-                              ].join(" ")}
+                              className="grid h-7 w-7 place-items-center rounded-xl"
+                              style={{
+                                backgroundColor: markerBg,
+                                color: markerFg,
+                                border: `1px solid ${ring}`,
+                              }}
                             >
                               <ChevronIcon />
                             </div>
                           </div>
 
-                          <div className={[cardBase, cardTone].join(" ")}>
+                          <div
+                            className="relative rounded-2xl px-4 py-3 shadow-sm"
+                            style={{
+                              backgroundColor: cardBg,
+                              border: `1px solid ${ring}`,
+                            }}
+                          >
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
-                                <div className="text-[12px] font-medium text-slate-500">
+                                <div className="text-[12px] font-medium" style={{ color: subText }}>
                                   {it.date}
                                 </div>
-                                <div className="mt-0.5 text-[15px] font-semibold text-slate-900">
+                                <div className="mt-0.5 text-[15px] font-semibold">
                                   {it.title}
                                 </div>
                               </div>
 
                               <div
-                                className={[
-                                  "shrink-0 rounded-full px-3 py-1 text-[12px] font-semibold shadow-sm",
-                                  badgeTone,
-                                ].join(" ")}
+                                className="shrink-0 rounded-full px-3 py-1 text-[12px] font-semibold shadow-sm"
+                                style={{ backgroundColor: badgeBg, color: "white" }}
                               >
                                 {isLatest ? "Latest" : "Done"}
                               </div>
                             </div>
 
-                            <div className="mt-2 text-[13.5px] leading-relaxed text-slate-700">
+                            <div className="mt-2 text-[13.5px] leading-relaxed" style={{ color: isDark ? "rgba(226,232,240,0.88)" : "rgba(51,65,85,0.95)" }}>
                               {it.text}
                             </div>
                           </div>
@@ -306,7 +371,7 @@ export function RoadmapBell() {
                   </div>
                 </div>
 
-                <div className="mt-3 text-[12px] text-slate-400">
+                <div className="mt-3 text-[12px]" style={{ color: isDark ? "rgba(148,163,184,0.85)" : "rgba(100,116,139,0.75)" }}>
                   Tip: Add new updates by editing <span className="font-mono">src/lib/roadmap.ts</span>
                 </div>
               </div>
