@@ -28,6 +28,13 @@ export const ROADMAP: RoadmapItem[] = [
     tone: 'red',
   },
   {
+    id: '2026-01-12-integrating-api',
+    date: '12.01.2026',
+    title: 'Integrating API',
+    text: 'Latest update: Integrating API',
+    tone: 'red',
+  },
+  {
     id: '2026-01-07-api-integration',
     date: '07.01.2026',
     title: 'API Integration',
