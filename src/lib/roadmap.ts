@@ -21,7 +21,7 @@ export type RoadmapItem = {
  */
 export const ROADMAP: RoadmapItem[] = [
   {
-    id: '2026-01-12-integrating-api',
+    id: 'nurrabby',
     date: '12.01.2026',
     title: 'Integrating API',
     text: 'Latest update: Integrating API',
