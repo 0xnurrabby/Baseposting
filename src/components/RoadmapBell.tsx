@@ -33,12 +33,14 @@ function getDarkNow() {
   try {
     const el = document.documentElement;
     const body = document.body;
-    // Tailwind / app class based dark mode
+    // class based
     if (el?.classList?.contains("dark") || body?.classList?.contains("dark")) return true;
-    // If app uses data-theme
+
+    // attribute based
     const dt = el?.getAttribute?.("data-theme") || body?.getAttribute?.("data-theme");
     if (dt && dt.toLowerCase().includes("dark")) return true;
-    // Fallback
+
+    // fallback
     return !!window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
   } catch {
     return false;
@@ -78,6 +80,7 @@ function ChevronIcon({ size = 16 }: { size?: number }) {
 export function RoadmapBell() {
   const items = (ROADMAP as unknown as RoadmapItem[]) ?? [];
 
+  // newest item should be first
   const latest = items[0];
   const latestSig = useMemo(() => {
     if (!latest) return "none";
@@ -96,7 +99,7 @@ export function RoadmapBell() {
     const seen = safeGet(STORAGE_KEY);
     setHasUnseen(seen !== latestSig);
 
-    // Update on system scheme change
+    // system scheme changes
     let mq: MediaQueryList | null = null;
     const onMQ = () => setIsDark(getDarkNow());
     try {
@@ -106,7 +109,7 @@ export function RoadmapBell() {
       // ignore
     }
 
-    // Update on html/body class/theme attribute change (Farcaster toggle)
+    // class/data-theme changes (Farcaster toggle)
     const mo = new MutationObserver(() => setIsDark(getDarkNow()));
     try {
       mo.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
@@ -165,7 +168,7 @@ export function RoadmapBell() {
   const closeBg = isDark ? "rgba(255,255,255,0.10)" : "rgba(15,23,42,0.06)";
   const closeFg = isDark ? "rgba(255,255,255,0.92)" : "rgba(15,23,42,0.86)";
 
-  // Blue rail for both themes (softer light, icy dark)
+  // Blue rail colors
   const blueMid = isDark ? "rgba(147,197,253,0.55)" : "rgba(59,130,246,0.42)";
   const blueSoft = isDark ? "rgba(147,197,253,0.20)" : "rgba(59,130,246,0.16)";
   const blueFade = "rgba(59,130,246,0.00)";
@@ -189,6 +192,7 @@ export function RoadmapBell() {
           <BellIcon />
         </span>
 
+        {/* status dot */}
         <span
           className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full"
           style={{
@@ -197,6 +201,7 @@ export function RoadmapBell() {
           }}
         />
 
+        {/* subtle halo */}
         {hasUnseen ? (
           <motion.span
             className="absolute inset-0 rounded-2xl"
@@ -214,13 +219,7 @@ export function RoadmapBell() {
       {open ? (
         <motion.div key="overlay" className="fixed inset-0 z-[10000]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
           {/* Backdrop */}
-          <button
-            type="button"
-            aria-label="Close updates"
-            onClick={() => setOpen(false)}
-            className="absolute inset-0"
-            style={{ backgroundColor: backdropBg }}
-          />
+          <button type="button" aria-label="Close updates" onClick={() => setOpen(false)} className="absolute inset-0" style={{ backgroundColor: backdropBg }} />
 
           <div
             className="absolute inset-0 flex items-end justify-center"
@@ -256,6 +255,7 @@ export function RoadmapBell() {
                       Roadmap & recent changes
                     </div>
                   </div>
+
                   <button
                     type="button"
                     onClick={() => setOpen(false)}
@@ -284,138 +284,143 @@ export function RoadmapBell() {
                     touchAction: "pan-y",
                   }}
                 >
-                  {/* Perfect timeline geometry (L-branch arrows like the sketch) */}
-{(() => {
-  // Layout constants (px)
-  const RAIL_LEFT = 22;          // main vertical line x
-  const BRANCH_W = 26;           // horizontal branch length
-  const ARROW_SIZE = 28;         // arrow bubble size
-  const GAP_AFTER_ARROW = 14;    // gap between arrow and card
+                  {/* Timeline (L-branch arrows like your sketch) */}
+                  {(() => {
+                    // Layout constants (px)
+                    const RAIL_LEFT = 22; // main vertical line x
+                    const BRANCH_W = 26; // horizontal branch length
+                    const ARROW_SIZE = 28; // arrow bubble size
+                    const GAP_AFTER_ARROW = 14; // gap between arrow and card
 
-  // Derived positions
-  const ARROW_LEFT = RAIL_LEFT + BRANCH_W - ARROW_SIZE / 2; // arrow center on branch end
-  const ITEM_PL = ARROW_LEFT + ARROW_SIZE + GAP_AFTER_ARROW; // card left padding
+                    // Derived positions
+                    const ARROW_LEFT = RAIL_LEFT + BRANCH_W - ARROW_SIZE / 2; // arrow center on branch end
+                    const ITEM_PL = ARROW_LEFT + ARROW_SIZE + GAP_AFTER_ARROW; // card left padding
+
+                    return (
+                      <>
+                        {/* main vertical rail */}
+                        <div
+                          className="absolute top-4 bottom-4"
+                          style={{
+                            left: `${RAIL_LEFT}px`,
+                            width: "2px",
+                            borderRadius: "999px",
+                            background: `linear-gradient(to bottom, ${blueFade}, ${blueMid}, ${blueFade})`,
+                          }}
+                        />
+
+                        <div className="space-y-3">
+                          {items.map((it, idx) => {
+                            const tone: Tone = (it.tone ?? "green") as Tone;
+                            const isLatest = idx === 0 && tone === "red";
+
+                            const cardBg =
+                              tone === "red"
+                                ? isDark
+                                  ? "rgba(244,63,94,0.14)"
+                                  : "rgba(255,241,242,0.92)"
+                                : isDark
+                                  ? "rgba(16,185,129,0.14)"
+                                  : "rgba(236,253,245,0.85)";
+
+                            const badgeBg = tone === "red" ? "#F43F5E" : "#10B981";
+
+                            const markerBg =
+                              tone === "red"
+                                ? isDark
+                                  ? "rgba(244,63,94,0.22)"
+                                  : "rgba(244,63,94,0.10)"
+                                : isDark
+                                  ? "rgba(16,185,129,0.22)"
+                                  : "rgba(16,185,129,0.10)";
+
+                            const markerFg = tone === "red" ? "#FB7185" : "#34D399";
+
+                            return (
+                              <div
+                                key={it.id}
+                                className="relative"
+                                style={{
+                                  paddingLeft: `${ITEM_PL}px`,
+                                  minHeight: "92px",
+                                }}
+                              >
+                                {/* horizontal branch from rail -> arrow */}
+                                <div
+                                  className="absolute"
+                                  style={{
+                                    left: `${RAIL_LEFT}px`,
+                                    top: "28px",
+                                    width: `${BRANCH_W}px`,
+                                    height: "2px",
+                                    background: `linear-gradient(to right, ${blueMid}, ${blueSoft})`,
+                                    borderRadius: "999px",
+                                    transform: "translateY(-1px)",
+                                  }}
+                                />
+
+                                {/* arrow bubble at branch end */}
+                                <div
+                                  className="absolute grid place-items-center rounded-xl"
+                                  style={{
+                                    left: `${ARROW_LEFT}px`,
+                                    top: "14px",
+                                    width: `${ARROW_SIZE}px`,
+                                    height: `${ARROW_SIZE}px`,
+                                    backgroundColor: markerBg,
+                                    color: markerFg,
+                                    border: `1px solid ${ring}`,
+                                    boxShadow: isDark ? "0 10px 18px rgba(0,0,0,0.35)" : "0 10px 18px rgba(0,0,0,0.10)",
+                                  }}
+                                >
+                                  <ChevronIcon />
+                                </div>
+
+                                {/* card */}
+                                <div className="relative rounded-2xl px-4 py-3 shadow-sm" style={{ backgroundColor: cardBg, border: `1px solid ${ring}` }}>
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <div className="text-[12px] font-medium" style={{ color: subText }}>
+                                        {it.date}
+                                      </div>
+                                      <div className="mt-0.5 text-[15px] font-semibold">{it.title}</div>
+                                    </div>
+
+                                    <div className="shrink-0 rounded-full px-3 py-1 text-[12px] font-semibold shadow-sm" style={{ backgroundColor: badgeBg, color: "white" }}>
+                                      {isLatest ? "Latest" : "Done"}
+                                    </div>
+                                  </div>
+
+                                  <div className="mt-2 text-[13.5px] leading-relaxed" style={{ color: isDark ? "rgba(226,232,240,0.88)" : "rgba(51,65,85,0.95)" }}>
+                                    {it.text}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+
+                <div className="mt-3 text-[12px]" style={{ color: isDark ? "rgba(148,163,184,0.85)" : "rgba(100,116,139,0.75)" }}>
+                  Tip: Add new updates by editing <span className="font-mono">src/lib/roadmap.ts</span>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
+  );
+
+  if (!mounted || typeof document === "undefined") return null;
 
   return (
     <>
-      {/* main vertical rail */}
-      <div
-        className="absolute top-4 bottom-4"
-        style={{
-          left: `${RAIL_LEFT}px`,
-          width: "2px",
-          borderRadius: "999px",
-          background: `linear-gradient(to bottom, ${blueFade}, ${blueMid}, ${blueFade})`,
-        }}
-      />
-
-      <div className="space-y-3">
-        {items.map((it, idx) => {
-          const tone: Tone = (it.tone ?? "green") as Tone;
-          const isLatest = idx === 0 && tone === "red";
-
-          const cardBg =
-            tone === "red"
-              ? isDark
-                ? "rgba(244,63,94,0.14)"
-                : "rgba(255,241,242,0.92)"
-              : isDark
-                ? "rgba(16,185,129,0.14)"
-                : "rgba(236,253,245,0.85)";
-
-          const badgeBg = tone === "red" ? "#F43F5E" : "#10B981";
-
-          const markerBg =
-            tone === "red"
-              ? isDark
-                ? "rgba(244,63,94,0.22)"
-                : "rgba(244,63,94,0.10)"
-              : isDark
-                ? "rgba(16,185,129,0.22)"
-                : "rgba(16,185,129,0.10)";
-
-          const markerFg = tone === "red" ? "#FB7185" : "#34D399";
-
-          return (
-            <div
-              key={it.id}
-              className="relative"
-              style={{
-                paddingLeft: `${ITEM_PL}px`,
-                // give enough left room so branch never overlaps cards
-                minHeight: "92px",
-              }}
-            >
-              {/* L-shape branch: from vertical rail -> to arrow center */}
-              <div
-                className="absolute"
-                style={{
-                  left: `${RAIL_LEFT}px`,
-                  top: "28px",
-                  width: `${BRANCH_W}px`,
-                  height: "2px",
-                  background: `linear-gradient(to right, ${blueMid}, ${blueSoft})`,
-                  borderRadius: "999px",
-                  transform: "translateY(-1px)",
-                }}
-              />
-
-              {/* Arrow bubble (sits at end of branch) */}
-              <div
-                className="absolute grid place-items-center rounded-xl"
-                style={{
-                  left: `${ARROW_LEFT}px`,
-                  top: "14px",
-                  width: `${ARROW_SIZE}px`,
-                  height: `${ARROW_SIZE}px`,
-                  backgroundColor: markerBg,
-                  color: markerFg,
-                  border: `1px solid ${ring}`,
-                  boxShadow: isDark
-                    ? "0 10px 18px rgba(0,0,0,0.35)"
-                    : "0 10px 18px rgba(0,0,0,0.10)",
-                }}
-              >
-                <ChevronIcon />
-              </div>
-
-              {/* Card */}
-              <div
-                className="relative rounded-2xl px-4 py-3 shadow-sm"
-                style={{
-                  backgroundColor: cardBg,
-                  border: `1px solid ${ring}`,
-                }}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-[12px] font-medium" style={{ color: subText }}>
-                      {it.date}
-                    </div>
-                    <div className="mt-0.5 text-[15px] font-semibold">{it.title}</div>
-                  </div>
-
-                  <div
-                    className="shrink-0 rounded-full px-3 py-1 text-[12px] font-semibold shadow-sm"
-                    style={{ backgroundColor: badgeBg, color: "white" }}
-                  >
-                    {isLatest ? "Latest" : "Done"}
-                  </div>
-                </div>
-
-                <div
-                  className="mt-2 text-[13.5px] leading-relaxed"
-                  style={{
-                    color: isDark ? "rgba(226,232,240,0.88)" : "rgba(51,65,85,0.95)",
-                  }}
-                >
-                  {it.text}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      {createPortal(bell, document.body)}
+      {createPortal(overlay, document.body)}
     </>
   );
-})()}
+}
