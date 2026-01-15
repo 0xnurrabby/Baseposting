@@ -1031,7 +1031,7 @@ async function waitForCallsTxHash(
                   onClick={() => void onGenerate(false)}
                 >
                   <Sparkles className="h-4 w-4" />
-                  {generating ? 'Working…' : 'Generate'}
+                  {generating ? 'Working…' : 'Generate (-1c)'}
                 </Button>
 
                 <div className="flex flex-col gap-2 sm:flex-row">
@@ -1110,7 +1110,7 @@ async function waitForCallsTxHash(
                       className="px-5 py-2.5 text-sm"
                     >
                       <ImageIcon className="h-4 w-4" />
-                      Generate Photo
+                      Generate Photo (-5c)
                     </Button>
                   </motion.div>
                 </div>
