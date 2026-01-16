@@ -1279,7 +1279,7 @@ async function waitForCallsTxHash(
 	                        value={tipUsd}
 	                        onChange={(e) => setTipUsd(e.target.value)}
 	                        inputMode="decimal"
-	                        placeholder="5"
+	                        placeholder="500"
 	                        className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none transition focus:border-zinc-400 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-zinc-600"
 	                      />
 	                    </div>
