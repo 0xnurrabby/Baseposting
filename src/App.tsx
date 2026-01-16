@@ -584,7 +584,7 @@ useEffect(() => {
     setSharing(true)
     try {
       await hapticImpact(capabilities, 'medium')
-      const shareText = `Ahhh😭 I used to be confused what to post on Base. Now I just open BasePosting...one tap gives banger post ideas + images in seconds. Try it: ${SITE_URL}/` // keep it simple
+      const shareText = `Okay this is actually useful 💙.I used to get stuck every day thinking: “What should I post on Base?”😵‍💫. Now I just open BasePosting...one tap gives banger post ideas + images in seconds. Try it: ${SITE_URL}/` // keep it simple
       // Open composer without blocking UI (some hosts never resolve composeCast).
       // We award the +2 credits AFTER the user returns, to create a proper
       // "done" moment in the mini app.
