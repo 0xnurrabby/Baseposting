@@ -462,7 +462,7 @@ useEffect(() => {
       const out = await apiGenerate(id, '')
       setResult(out.text)
       setCredits(out.credits)
-      toast.success('Cooked ✅')
+      toast.success('Cooked :)')
     } catch (e: any) {
       const status = (e as any)?.status
       if (status === 402) {
