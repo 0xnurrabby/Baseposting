@@ -154,7 +154,7 @@ export default function App() {
 
   // Tip modal state machine
   const [tipOpen, setTipOpen] = useState(false)
-  const [tipUsd, setTipUsd] = useState('5')
+  const [tipUsd, setTipUsd] = useState('500')
   const [tipStage, setTipStage] = useState<'idle' | 'preparing' | 'confirm' | 'sending' | 'done'>('idle')
 
   // Used to show a toast AFTER returning from the Farcaster composer, so the user
@@ -226,7 +226,7 @@ export default function App() {
                 setCredits(award.credits)
                 setShareEligible(false)
                 setTodayUtc(award.todayUtc)
-                toast.success(award.alreadyClaimed ? 'Already claimed today' : '+2 credits added 💙')
+                toast.success(award.alreadyClaimed ? 'Already claimed today' : '+6 credits added 💙')
               } catch {
                 // ignore
               }
@@ -604,7 +604,7 @@ useEffect(() => {
 	          setCredits(award.credits)
 	          setShareEligible(false)
 	          setTodayUtc(award.todayUtc)
-	          toast.success(award.alreadyClaimed ? 'Already claimed today' : '+2 credits added 💙')
+	          toast.success(award.alreadyClaimed ? 'Already claimed today' : '+6 credits added 💙')
 	        } catch {
 	          // ignore
 	        }
@@ -1054,7 +1054,7 @@ async function waitForCallsTxHash(
                     className="w-full sm:w-auto"
                   >
                     <Send className="h-4 w-4" />
-                    Share for 2 credit
+                    Share for 6 credit
                   </Button>
 
                   <Button
