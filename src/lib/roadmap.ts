@@ -20,12 +20,20 @@ export type RoadmapItem = {
  * - Older/done items: tone: 'green'.
  */
 export const ROADMAP: RoadmapItem[] = [
-        {
+   
+          {
+    id: '2026-01-15-Add-Photo-Generation',
+    date: '15.01.2026',
+    title: 'Add Image Gen Feature',
+    text: 'Implemented the Image Gen feature so users can generate photos right inside the editor while creating baseposts. Added prompt templates + style presets, async generation with progress status, and better error handling/retries. End-to-end flow is working—next up: quality tuning and faster generation time.',
+    tone: 'green',
+  },
+  {
     id: '2026-01-09-Photo-Generation',
     date: '09.01.2026',
     title: 'New GOAL: Photo Generation',
     text: 'I’m exploring different APIs to bring perfect image generation for your generated baseposts, but it’s been a tough ride-API access is limited, payments are getting declined, costs are high, and errors keep popping up. Still, I’m not giving up. I’ll keep testing options and pushing until this feature becomes real for everyone. Thank you everyone guys✨',
-    tone: 'red',
+    tone: 'green',
   },
   {
     id: '2026-01-09-add-3-more-buttons-and-logic',
