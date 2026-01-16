@@ -34,7 +34,7 @@ export default async function handler(req: any, res: any) {
   }
 
   await markShareClaimed(userId)
-  const updated = await adjustCredits(userId, +2)
+  const updated = await adjustCredits(userId, +6)
 
   return json(res, 200, { ok: true, alreadyClaimed: false, credits: updated.credits, todayUtc: check.today })
 }
