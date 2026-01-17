@@ -1391,7 +1391,7 @@ async function waitForCallsTxHash(
                 </div>
 
                 <div className="mt-3 text-xs text-zinc-500 dark:text-zinc-500">
-                  Tip: If you select nothing, the server uses <span className="font-semibold">PHOTO_STYLE_PRESET</span> (or a random pick from <span className="font-semibold">PHOTO_STYLE_POOL</span> if you enable that).
+                  Tip: If you select nothing, the server will use default.
                 </div>
               </motion.div>
             </div>
