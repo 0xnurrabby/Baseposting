@@ -14,38 +14,264 @@ function toUserId(body: any) {
   return null
 }
 
+/**
+ * Style presets
+ * - Keep negatives short (too many hard "don't" rules can hurt results).
+ * - Prefer: describe scene + then add style cues. :contentReference[oaicite:1]{index=1}
+ */
+type StylePreset = {
+  label: string
+  style: string
+}
+
+const STYLE_PRESETS: Record<string, StylePreset> = {
+  // --- your current best ---
+  storybook: {
+    label: 'Storybook Watercolor',
+    style: [
+      "Style: hand-drawn storybook illustration (children's book vibe).",
+      'Clean ink outlines, soft watercolor shading, pastel/muted colors, gentle paper texture.',
+      'Whimsical medieval fantasy / RPG concept art feel, warm lighting, detailed background.',
+      'Slightly isometric/diagonal composition, cozy scene, expressive characters (if any).',
+      'Not photorealistic. Not glossy plastic.',
+    ].join(' '),
+  },
+
+  // --- requested: cinematic / realistic / modern ---
+  cinematic: {
+    label: 'Cinematic Illustration',
+    style: [
+      'Style: modern cinematic illustration.',
+      'High detail, dramatic lighting, depth of field, dynamic composition, film-like color grading.',
+      'Can be tasteful realistic render, but avoid generic product packshot look.',
+    ].join(' '),
+  },
+
+  realistic: {
+    label: 'Photorealistic',
+    style: [
+      'Style: photorealistic image.',
+      'Natural lighting, realistic materials, believable textures, high fidelity details.',
+      'Candid composition, not staged studio packshot.',
+    ].join(' '),
+  },
+
+  modern: {
+    label: 'Modern Clean Illustration',
+    style: [
+      'Style: modern clean digital illustration.',
+      'Crisp shapes, subtle gradients, minimal noise, contemporary aesthetic.',
+      'Balanced composition, app-friendly, polished look.',
+    ].join(' '),
+  },
+
+  // --- extra popular styles ---
+  anime: {
+    label: 'Anime',
+    style: [
+      'Style: anime illustration.',
+      'Clean line art, soft cel shading, expressive character design, vibrant but tasteful colors.',
+      'Cinematic framing and clear silhouettes.',
+    ].join(' '),
+  },
+
+  ghibli: {
+    label: 'Cozy Animation Background',
+    style: [
+      'Style: cozy whimsical animation background.',
+      'Soft painterly look, warm gentle light, natural colors, charming details, peaceful mood.',
+    ].join(' '),
+  },
+
+  watercolor: {
+    label: 'Soft Watercolor',
+    style: [
+      'Style: watercolor painting.',
+      'Soft edges, pigment blooms, light washes, paper texture, gentle palette.',
+    ].join(' '),
+  },
+
+  oil: {
+    label: 'Oil Painting',
+    style: [
+      'Style: oil painting.',
+      'Visible brush strokes, rich texture, painterly lighting, museum-quality feel.',
+    ].join(' '),
+  },
+
+  pencil: {
+    label: 'Pencil Sketch',
+    style: [
+      'Style: pencil sketch.',
+      'Cross-hatching, paper grain, monochrome shading, hand-drawn lines.',
+    ].join(' '),
+  },
+
+  inkwash: {
+    label: 'Ink & Wash',
+    style: [
+      'Style: ink and wash illustration.',
+      'Elegant ink lines, expressive brushwork, soft wash shading, textured paper.',
+    ].join(' '),
+  },
+
+  comic: {
+    label: 'Comic / Graphic Novel',
+    style: [
+      'Style: comic book / graphic novel.',
+      'Bold line art, dynamic panels feel, gentle halftone shading, dramatic contrast.',
+    ].join(' '),
+  },
+
+  pixel: {
+    label: 'Pixel Art',
+    style: [
+      'Style: pixel art (32-bit retro game).',
+      'Crisp pixels, limited palette, readable silhouettes, clean dithering.',
+    ].join(' '),
+  },
+
+  isometric: {
+    label: 'Isometric',
+    style: [
+      'Style: isometric illustration.',
+      'Clean geometry, soft shadows, neat edges, modern app-friendly look.',
+    ].join(' '),
+  },
+
+  flat: {
+    label: 'Flat Vector',
+    style: [
+      'Style: flat vector illustration.',
+      'Clean shapes, smooth gradients, minimal texture, crisp modern design.',
+    ].join(' '),
+  },
+
+  // 3D family
+  '3d': {
+    label: '3D Render',
+    style: [
+      'Style: 3D render.',
+      'Soft global illumination, realistic shading, clean composition, detailed materials.',
+    ].join(' '),
+  },
+
+  clay: {
+    label: '3D Clay Diorama',
+    style: [
+      'Style: 3D clay render.',
+      'Cute diorama, soft studio lighting, smooth clay materials, charming miniature look.',
+    ].join(' '),
+  },
+
+  lowpoly: {
+    label: 'Low-poly 3D',
+    style: [
+      'Style: low-poly 3D.',
+      'Simple geometry, clean shading, minimal clutter, pleasant lighting.',
+    ].join(' '),
+  },
+
+  // vibes
+  cyberpunk: {
+    label: 'Cyberpunk Neon',
+    style: [
+      'Style: cyberpunk.',
+      'Neon glow, rainy night ambience, reflective surfaces, high contrast, futuristic city vibe.',
+    ].join(' '),
+  },
+
+  vaporwave: {
+    label: 'Vaporwave / Synthwave',
+    style: [
+      'Style: vaporwave / synthwave.',
+      'Neon gradients, retro 80s mood, soft glow, dreamy atmosphere.',
+    ].join(' '),
+  },
+
+  noir: {
+    label: 'Film Noir',
+    style: [
+      'Style: film noir.',
+      'Black and white, dramatic shadows, moody lighting, subtle grain, cinematic framing.',
+    ].join(' '),
+  },
+
+  fantasy: {
+    label: 'Fantasy Concept Art',
+    style: [
+      'Style: fantasy concept art.',
+      'Epic atmosphere, detailed environment, painterly lighting, adventurous mood.',
+    ].join(' '),
+  },
+
+  scifi: {
+    label: 'Sci-fi Concept Art',
+    style: [
+      'Style: sci-fi concept art.',
+      'Futuristic design, believable tech details, cinematic light, atmospheric depth.',
+    ].join(' '),
+  },
+}
+
+// aliases (so you can use many env names)
+const PRESET_ALIASES: Record<string, string> = {
+  // realistic aliases
+  photorealistic: 'realistic',
+  photo: 'realistic',
+  real: 'realistic',
+
+  // cinematic aliases
+  movie: 'cinematic',
+  film: 'cinematic',
+
+  // modern aliases
+  clean: 'modern',
+  minimal: 'modern',
+
+  // 3d aliases
+  render: '3d',
+  '3drender': '3d',
+
+  // storybook aliases
+  childrens: 'storybook',
+  children: 'storybook',
+  rpg: 'storybook',
+  medieval: 'storybook',
+
+  // vector aliases
+  vector: 'flat',
+}
+
+function normalizePresetKey(raw: string) {
+  const key = String(raw || '').trim().toLowerCase()
+  if (!key) return 'storybook'
+  return PRESET_ALIASES[key] || key
+}
+
 function buildPrompt(postText: string) {
   // Keep the prompt LIGHT (few rules) to avoid over-constraining the model.
   // We enforce only the non-negotiable: NO TEXT (aspect ratio is enforced by API config).
   const base = postText.replace(/\s+/g, ' ').trim().slice(0, 520)
 
   // Style can be changed from Vercel env without touching code.
-  // Options: "storybook" (default), "cinematic".
-  const preset = String(process.env.PHOTO_STYLE_PRESET || 'storybook').trim().toLowerCase()
+  const presetRaw = String(process.env.PHOTO_STYLE_PRESET || 'storybook')
+  const presetKey = normalizePresetKey(presetRaw)
+  const preset = STYLE_PRESETS[presetKey] || STYLE_PRESETS.storybook
 
-  const storybookStyle = [
-    'Style: hand-drawn storybook illustration (children\'s book vibe).',
-    'Clean ink outlines, soft watercolor shading, pastel/muted colors, gentle paper texture.',
-    'Whimsical medieval fantasy / RPG concept art feel, warm lighting, detailed background.',
-    'Slightly isometric/diagonal composition, cozy scene, expressive characters (if any).',
-    'NOT photorealistic. NOT 3D. No harsh neon. No glossy plastic.',
-  ].join(' ')
+  // optional extra hint (small!)
+  const extraHint = String(process.env.PHOTO_STYLE_EXTRA_HINT || '').trim()
 
-  const cinematicStyle = [
-    'Style: modern cinematic illustration (high detail, dramatic lighting, depth, dynamic composition).',
-    'Can be photorealistic or tasteful 3D render, but avoid generic packshot looks.',
-  ].join(' ')
-
-  const styleLine = preset === 'cinematic' ? cinematicStyle : storybookStyle
-
+  // Important: describe the scene + then style cues (better than keyword dumps). :contentReference[oaicite:2]{index=2}
   return [
     'Generate ONE image that visually complements the post below.',
-    styleLine,
+    preset.style,
+    extraHint ? `Extra hint: ${extraHint}` : '',
     'Rule: Do NOT include any text, captions, letters, numbers, logos, or watermarks.',
     '',
     'Post (inspiration only — do not render as text):',
     base ? base : '(empty)',
-  ].join('\n')
+  ].filter(Boolean).join('\n')
 }
 
 async function generateWithFallback(prompt: string) {
@@ -233,8 +459,10 @@ export default async function handler(req: any, res: any) {
 
   try {
     const prompt = buildPrompt(postText)
-    const model = String(process.env.IMAGEN_MODEL || 'imagen-4.0-generate-001').trim()
-    const img = model.startsWith('gemini-') ? await generateNanoBanana(prompt) : await generateImagen(prompt)
+
+    // Use fallback wrapper (you already wrote it) — safer:
+    const img = await generateWithFallback(prompt)
+
     // Prefer durable storage (Vercel Blob) so the image is available on ALL devices/instances.
     // If not configured, fall back to Redis/in-memory (dev only).
     const blobUrl = await maybeUploadToBlob(img.mimeType, img.bytesBase64Encoded)
