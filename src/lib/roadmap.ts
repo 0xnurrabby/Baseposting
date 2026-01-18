@@ -24,7 +24,7 @@ export const ROADMAP: RoadmapItem[] = [
     id: '2026-01-16-Add-Paymaster',
     date: '16.01.2026',
     title: 'Get Credit with 0 gas⚡',
-    text: 'No ETH needed! Your Get Credit will go through with zero gas fee on Base App-fees are covered by BasePosting for you.',
+    text: 'No ETH needed!! Your Get Credit will go through with zero gas fee on Base App-fees are covered by BasePosting for you.',
     tone: 'green',
   },
           {
