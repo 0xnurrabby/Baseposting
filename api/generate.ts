@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import { adjustCredits, getOrCreateUser, incrementMetric, getRedisClient } from './_lib/store.js'
 import { logCreditSpend } from './_lib/leaderboard.js'
 import { handleOptions, json, readJson, requirePost, setCors } from './_lib/http.js'
@@ -85,67 +86,48 @@ type FormatTemplate = {
   targetChars: string
 }
 
-// Goal: avoid boring paragraph blocks.
-// Also: avoid "A:/B:" dialogues and ugly checklists. Keep formats that actually look like real posts.
 const FORMAT_TEMPLATES: FormatTemplate[] = [
   {
     key: 'one_liner',
     name: 'One-liner',
-    desc: 'One punchy line. Can use 1 emoji or ":)". No line breaks.',
-    hardRules: ['Exactly 1 line.', 'No blank lines.', 'Keep it specific (not generic advice).'],
-    targetChars: '≤ 170 chars',
+    desc: 'One punchy sentence. No line breaks.',
+    hardRules: ['Exactly 1 line.', 'No blank lines.', 'No bullets.'],
+    targetChars: '≤ 160 chars',
   },
   {
-    key: 'split_punch',
-    name: 'Split punch',
-    desc: '3 short lines with cadence. NOT a paragraph.',
-    hardRules: [
-      'Exactly 3 lines.',
-      'No blank lines.',
-      'Each line should be short (≈ 4–10 words).',
-      'Use at most 1 emoji total (optional).',
-    ],
-    targetChars: '≈ 170–260 chars',
+    key: 'two_lines',
+    name: 'Two lines',
+    desc: 'Two short lines, no blank line between them.',
+    hardRules: ['Exactly 2 lines.', 'No blank line between lines.'],
+    targetChars: '≤ 220 chars',
   },
   {
-    key: 'hook_bullets',
-    name: 'Hook + bullets',
-    desc: '1 hook line, optional blank line, then 2–3 bullets using "-" or "•".',
-    hardRules: [
-      'Line 1 is a hook.',
-      'Optional one blank line.',
-      'Then 2 or 3 bullets.',
-      'Use "-" or "•" bullets only.',
-      'No long paragraphs in any line.',
-    ],
-    targetChars: '≈ 220–420 chars',
+    key: 'stanza',
+    name: 'Stanza',
+    desc: '3–5 short lines. May include 1 blank line, but not required.',
+    hardRules: ['3 to 5 lines total.', 'At most ONE blank line.'],
+    targetChars: '≤ 320 chars',
   },
   {
-    key: 'blockquote_react',
-    name: 'Quote + reaction',
-    desc: 'A short quote line starting with ">", then 2 lines reacting to it.',
-    hardRules: ['Line 1 starts with ">"', 'Total exactly 3 lines.', 'No blank lines.'],
-    targetChars: '≈ 220–360 chars',
+    key: 'mini_list',
+    name: 'Mini list',
+    desc: 'A tiny bullet list (2–3 bullets) with a short intro line.',
+    hardRules: ['Intro line + 2 or 3 bullets.', 'Use "-" bullets only.'],
+    targetChars: '≤ 360 chars',
   },
   {
-    key: 'mini_thread',
-    name: 'Mini thread',
-    desc: 'Numbered micro-thread: 1) 2) 3). No paragraph.',
-    hardRules: ['Exactly 3 lines.', 'Each line starts with "1)" or "2)" or "3)".', 'Each line is 1 sentence max.'],
-    targetChars: '≈ 240–460 chars',
+    key: 'q_and_a',
+    name: 'Q&A',
+    desc: 'A question line, then a short answer line.',
+    hardRules: ['Line 1 must be a question ending with "?"', 'Line 2 answers it.', 'Exactly 2 lines.'],
+    targetChars: '≤ 240 chars',
   },
   {
-    key: 'me_also_me',
-    name: 'Me / also me',
-    desc: 'Relatable 3-line meme format: me: / also me: / kicker.',
-    hardRules: [
-      'Exactly 3 lines.',
-      'Line 1 starts with "me:"',
-      'Line 2 starts with "also me:"',
-      'Line 3 is a short Base-related kicker (≤ 10 words).',
-      'No quotes around the full lines.',
-    ],
-    targetChars: '≈ 180–320 chars',
+    key: 'micro_story',
+    name: 'Micro story',
+    desc: 'Tiny story in 2–3 sentences, single paragraph (no line breaks).',
+    hardRules: ['Exactly 1 paragraph (no line breaks).', '2 to 3 sentences.'],
+    targetChars: '≤ 320 chars',
   },
 ]
 
@@ -157,8 +139,7 @@ const STYLE_SEEDS = [
   'light meme energy (not cringe)',
   'curious question',
   'sharp analogy',
-  'tiny story / observation (split into lines, not a paragraph)',
-  'structured notes (bullets)',
+  'tiny story / observation',
 ]
 
 const BANNED_OPENERS = [
@@ -198,18 +179,19 @@ const FALLBACK_CATEGORIES = [
   'mini_update',
 ]
 
-// Lower weight = less likely. We intentionally down-weight giveaway content.
+// Category weights (lower = less likely). User feedback: giveaway posts often feel low-quality.
+// Keep giveaways rare, and when chosen, generate them as a *PSA/observation* (not “rules: join group”).
 const CATEGORY_WEIGHTS: Record<string, number> = {
-  builder_tip: 1.25,
+  giveaway: 0.22,
+  gm: 0.4,
+  micro_story: 1.05,
+  builder_tip: 1.15,
+  onchain_social: 1.1,
   trading_mood: 1.0,
-  onchain_social: 1.05,
+  mini_update: 1.0,
+  funny_one_liner: 1.0,
+  question_prompt: 1.0,
   community_observation: 1.0,
-  funny_one_liner: 0.95,
-  question_prompt: 0.9,
-  mini_update: 0.9,
-  micro_story: 0.75,
-  gm: 0.25,
-  giveaway: 0.15,
 }
 
 function categorizeText(text: string): string {
@@ -217,8 +199,7 @@ function categorizeText(text: string): string {
   const hasQ = t.includes('?')
 
   if (/(\bgm\b|good morning)/.test(t)) return 'gm'
-  // Giveaway detection: avoid misclassifying normal "USDC" mentions as giveaway.
-  if (/(giveaway|airdrop|rules:|ends in|join group|join channel)/.test(t)) return 'giveaway'
+  if (/(giveaway|airdrop|rules:|ends in|join group|join channel|usd\b)/.test(t)) return 'giveaway'
   if (/(bullish|bearish|price|chart|token|mcap|market|perp|perps|alpha|bag|pump|dump)/.test(t)) return 'trading_mood'
   if (/(build|builder|ship|shipping|dev|deploy|contract|bounty|quest|hackathon|sdk)/.test(t)) return 'builder_tip'
   if (/(warpcast|farcaster|cast|frame|mini app|channel)/.test(t)) return 'onchain_social'
@@ -246,130 +227,56 @@ function pickWithHistory<T extends { key?: string }>(pool: T[], recentKeys: stri
   return chooseFrom[Math.floor(Math.random() * chooseFrom.length)]
 }
 
-function weightedPick(items: string[], recent: string[]): string {
-  const recentSet = new Set(recent.filter(Boolean))
-  const pool = items.filter((c) => !recentSet.has(c))
-  const chooseFrom = pool.length ? pool : items
+function weightedPickCategory(categoryPool: string[], recentCats: string[]): string {
+  const recent = new Set(recentCats.filter(Boolean))
+  const pool = categoryPool.filter((c) => c && !recent.has(c))
+  const chooseFrom = pool.length ? pool : categoryPool
 
-  const weights = chooseFrom.map((c) => Math.max(0.01, Number(CATEGORY_WEIGHTS[c] ?? 1.0)))
-  const sum = weights.reduce((a, b) => a + b, 0)
-  let r = Math.random() * sum
-  for (let i = 0; i < chooseFrom.length; i++) {
+  // If we have enough alternatives, avoid giveaways aggressively.
+  const nonGiveaway = chooseFrom.filter((c) => c !== 'giveaway')
+  const finalPool = nonGiveaway.length >= 3 ? nonGiveaway : chooseFrom
+
+  let total = 0
+  const weights = finalPool.map((c) => {
+    const w = Math.max(0.05, Number(CATEGORY_WEIGHTS[c] ?? 1))
+    total += w
+    return w
+  })
+
+  let r = Math.random() * total
+  for (let i = 0; i < finalPool.length; i++) {
     r -= weights[i]
-    if (r <= 0) return chooseFrom[i]
+    if (r <= 0) return finalPool[i]
   }
-  return chooseFrom[chooseFrom.length - 1]
+  return finalPool[finalPool.length - 1] || 'community_observation'
 }
 
-function hasBaseAnchor(text: string): boolean {
-  const t = String(text || '').toLowerCase()
-  // Keep it simple and robust: must mention Base explicitly so readers understand the context.
-  return /\bbase\b/.test(t) || t.includes('@base') || t.includes('on base')
-}
+const BASE_CONTEXT_RE = /(\bbase\b|on\s+base|base\s+(chain|ecosystem|builders|community|timeline|culture)|@base\b)/i
+const CONTENT_HOOK_RE = /(build|builder|ship|shipping|deploy|dev|frame|cast|warpcast|farcaster|wallet|swap|bridge|contract|bounty|quest|trade|perp|fees?|tx|gas|eth|ethereum|coinbase)/i
 
-function looksLikeGiveawaySpam(text: string): boolean {
-  const t = String(text || '').toLowerCase()
-  return /(rules\s*:|ends\s+in|join\s+group|join\s+channel|dm\s+me|like\s*&\s*rt|retweet|airdrop\s+link)/.test(t)
-}
-
-function hasSuspiciousNumbers(candidate: string, corpus: string): boolean {
-  // If the model invents specific big numbers (members/viewers/USDC/etc.), reject unless the number exists in the source corpus.
-  const nums = (String(candidate || '').match(/\b\d{2,}\b/g) || []).map((x) => Number(x)).filter((n) => Number.isFinite(n))
-  if (!nums.length) return false
-  const corp = String(corpus || '')
-  for (const n of nums) {
-    if (n >= 50) {
-      if (!corp.includes(String(n))) return true
-    }
-  }
-  return false
-}
-
-function lengthOk(text: string, fmt: FormatTemplate): boolean {
+function validatePostClarity(text: string, category: string): string | null {
   const t = String(text || '').trim()
-  const n = t.length
-  if (!n) return false
-  // Avoid tiny, contextless blobs. One-liners can be short; others should have some substance.
-  if (fmt.key !== 'one_liner' && n < 170) return false
-  // Keep it readable in a cast/tweet UI.
-  if (n > 600) return false
-  return true
+  if (!t) return 'Empty output'
+
+  // Must contain an explicit Base anchor so the reader knows the context.
+  if (!BASE_CONTEXT_RE.test(t)) return 'Missing Base anchor'
+
+  // Avoid vague "someone said" without grounding it in Base context.
+  if (/(someone|somebody|they|them|this space|the community)/i.test(t) && !BASE_CONTEXT_RE.test(t)) return 'Too vague / missing context'
+
+  // For longer posts, require at least one concrete hook to avoid empty/vibe-only output.
+  if (t.length >= 80 && !CONTENT_HOOK_RE.test(t)) return 'Missing concrete hook'
+
+  // If this is a giveaway category, force it to be a *PSA* style (avoid inventing money / rules).
+  if (category === 'giveaway') {
+    const bad = /(rules:|join group|join channel|ends in|like\s*&\s*rt|retweet|tag\b|dm\s+me)/i
+    if (bad.test(t)) return 'Giveaway output looks like spam rules'
+    const needsPsa = /(verify|double[- ]check|official|scam|phish|careful|beware)/i
+    if (!needsPsa.test(t)) return 'Giveaway output missing PSA angle'
+  }
+
+  return null
 }
-
-function validateFormat(text: string, fmt: FormatTemplate): boolean {
-  const out = String(text || '').trim()
-  if (!out) return false
-
-  // Hard reject: awkward dialogue formats (A:/B:) or anything that looks like a script.
-  if (/(^|\n)\s*[AB]:\s+/m.test(out)) return false
-
-  // Hard reject: checkbox-style lists (looks spammy/ugly in posts).
-  if (/-\s*\[\s*[xX]?\s*\]\s+/.test(out)) return false
-
-  const lines = out.split('\n')
-  const nonEmpty = lines.filter((l) => l.trim().length > 0)
-
-  // Keep posts tweet-like: not too many lines.
-  if (nonEmpty.length > 6) return false
-
-  // Guard against boring paragraph blocks unless one_liner.
-  if (fmt.key !== 'one_liner' && !out.includes('\n')) return false
-
-  // Guard against overly long lines (looks like a paragraph even with line breaks).
-  for (const l of nonEmpty) {
-    if (l.trim().length > 120) return false
-  }
-
-  const hasBullet = /(^|\n)\s*[-•]\s+/.test(out)
-  const hasQuote = out.trimStart().startsWith('>')
-  const hasNumbered = /(^|\n)\s*[1-3]\)\s+/.test(out)
-
-  if (fmt.key === 'one_liner') {
-    return nonEmpty.length === 1 && nonEmpty[0].length <= 170
-  }
-
-  if (fmt.key === 'split_punch') {
-    return nonEmpty.length === 3
-  }
-
-  if (fmt.key === 'hook_bullets') {
-    const bulletLines = nonEmpty.slice(1).filter((l) => /^[-•]\s+/.test(l.trim()))
-    return nonEmpty.length >= 3 && nonEmpty.length <= 5 && hasBullet && bulletLines.length >= 2
-  }
-
-  if (fmt.key === 'blockquote_react') {
-    return nonEmpty.length === 3 && hasQuote
-  }
-
-  if (fmt.key === 'mini_thread') {
-    return nonEmpty.length === 3 && hasNumbered
-  }
-
-  if (fmt.key === 'me_also_me') {
-    if (nonEmpty.length !== 3) return false
-    if (!/^me:\s+/i.test(nonEmpty[0].trim())) return false
-    if (!/^also me:\s+/i.test(nonEmpty[1].trim())) return false
-    if (nonEmpty[2].trim().split(/\s+/).length > 10) return false
-    return true
-  }
-
-  // Default: must not be a single fat paragraph.
-  return nonEmpty.length >= 2
-}
-function hasUnverifiedLargeNumbers(out: string, sourceText: string): boolean {
-  const txt = String(out || '')
-  const srcTxt = String(sourceText || '')
-  const matches = Array.from(txt.matchAll(/\b\d{2,}\b/g)).map((m) => m[0])
-  for (const s of matches) {
-    const n = Number(s)
-    if (!Number.isFinite(n)) continue
-    // Only guard big-ish claims (e.g., 128 viewers, 340 members, 200 USDC).
-    if (n >= 50 && !srcTxt.includes(s)) return true
-  }
-  return false
-}
-
-
 
 function tokenize(s: string): string[] {
   return String(s || '')
@@ -538,24 +445,23 @@ async function openaiGenerate(args: {
 
   const model = process.env.OPENAI_MODEL || 'gpt-4o-mini'
 
-  const seed = `${Date.now()}:${Math.random().toString(16).slice(2)}`
+  const seed = crypto.randomUUID()
   const inspiration = buildInspirationBlock(args.posts, args.category)
 
   const system = [
     'You write posts for Farcaster/Base culture that feel 100% human.',
     'Goal: craft ONE post that is varied, specific, and not template-y.',
-    'Make the post visually readable: use line breaks and structure (bullets, > quote, 1) 2) 3)) when the format asks for it.',
-    'Avoid writing a plain paragraph block unless the format is explicitly One-liner.',
+    'The post must be self-contained: a reader should understand the Base/Farcaster context without extra explanation.',
     '',
     'Hard rules:',
     '- Output ONLY the final post text (no quotes, no prefaces).',
     '- Do NOT copy or closely paraphrase any single source post.',
     '- Avoid AI-sounding phrases, corporate tone, or generic hype.',
+    '- Include at least one explicit Base anchor (e.g., "Base", "on Base", "Base builders", "Base ecosystem", "@base").',
+    '- If you refer to "the community" or "people", ground it: say "Base community" / "builders on Base" etc.',
     '- No hashtags unless it feels genuinely organic (max 1).',
     '- Emojis are optional; if used, max 1 and not “aesthetic” ones.',
     '- Do NOT use long dashes (—) or en dashes (–). Use "..." if needed.',
-    '- Never use A:/B: dialogue lines.',
-    '- Never use checkbox lists like - [ ] (or - [x]).',
     '',
     'Avoid these openers:',
     `- ${BANNED_OPENERS.join(', ')}`,
@@ -566,9 +472,13 @@ async function openaiGenerate(args: {
     'Safety / truth:',
     ...BASE_GUARDRAILS.map((x) => `- ${x}`),
     '',
+    'Clarity rules:',
+    '- Include at least ONE explicit Base anchor word: "Base" or "on Base" or "Base builders" (so the context is clear).',
+    '- If you mention "community" / "timeline" / "this space", ground it as "Base community" / "Base timeline" etc.',
+    '- Avoid vague references like "someone said" unless you specify "someone on Base" or "a builder in the Base community".',
+    '',
     'Important: Do NOT always explain what Base is. Base can be background/culture.',
     'You can write about builders, onchain social, trading mood, community humor, or tiny observations, as long as it still fits “Base world”.',
-    'Clarity rule: the reader should understand it is about Base/on Base within the first 1–2 lines.',
   ].join('\n')
 
   const formatRules = [
@@ -577,6 +487,16 @@ async function openaiGenerate(args: {
     'Template hard rules:',
     ...args.format.hardRules.map((r) => `- ${r}`),
   ].join('\n')
+
+  const categoryNote =
+    args.category === 'giveaway'
+      ? [
+          'Category note (giveaway): Write as a PSA/observation on Base, not a promotion.',
+          '- Do NOT invent money amounts, winners, deadlines, or rules.',
+          '- Do NOT say "Like & RT", "join group", "DM me", etc.',
+          '- Do mention verifying official sources / scam awareness in 1 line.',
+        ].join('\n')
+      : ''
 
   const user = [
     `Variety seed: ${seed}`,
@@ -592,6 +512,8 @@ async function openaiGenerate(args: {
     'User extra context (if any):',
     args.extraPrompt?.trim() ? args.extraPrompt.trim() : '(none)',
     '',
+    categoryNote,
+    '',
     'Write 1 post now.',
   ].join('\n')
 
@@ -605,7 +527,7 @@ async function openaiGenerate(args: {
     top_p: 0.92,
     presence_penalty: 0.8,
     frequency_penalty: 0.35,
-    max_tokens: 300,
+    max_tokens: 220,
   }
 
   const resp = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -673,8 +595,6 @@ export default async function handler(req: any, res: any) {
     // Categorize posts for topic selection.
     for (const p of posts) p.category = categorizeText(p.text)
 
-    const sourceCorpus = posts.map((p) => p.text).join('\n')
-
     const history = await loadHistory(userId)
     const recentCats = history.map((h) => h.category).filter(Boolean).slice(0, 2)
     const recentFormats = history.map((h) => h.format).filter(Boolean).slice(0, 2)
@@ -682,8 +602,8 @@ export default async function handler(req: any, res: any) {
     const categories = Array.from(new Set(posts.map((p) => p.category).filter(Boolean)))
     const categoryPool = categories.length ? categories : FALLBACK_CATEGORIES
 
-    // Pick a category with weights (giveaway is intentionally rare) and avoid immediate repetition.
-    const category = weightedPick(categoryPool, recentCats)
+    // Pick a category + format that avoids immediate repetition.
+    const category = weightedPickCategory(categoryPool, recentCats)
 
     const format = pickWithHistory(FORMAT_TEMPLATES, recentFormats, (t) => t.key)
     const style = STYLE_SEEDS[Math.floor(Math.random() * STYLE_SEEDS.length)]
@@ -694,7 +614,7 @@ export default async function handler(req: any, res: any) {
     const maxAttempts = 4
     let lastErr: any = null
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const catForAttempt = attempt === 1 ? category : weightedPick(categoryPool, [category, ...recentCats])
+      const catForAttempt = attempt === 1 ? category : weightedPickCategory(categoryPool, [category, ...recentCats])
 
       const fmtForAttempt = attempt === 1 ? format : pickWithHistory(
         FORMAT_TEMPLATES,
@@ -715,24 +635,13 @@ export default async function handler(req: any, res: any) {
           attempt,
         })
 
-        if (!out) throw new Error('Empty output')
-
-        // Must mention Base so the context is clear.
-        if (!hasBaseAnchor(out)) throw new Error('Missing Base anchor')
-
-        // Avoid made-up big numbers unless they appear in the source corpus.
-        if (hasSuspiciousNumbers(out, sourceCorpus)) throw new Error('Suspicious invented numbers')
-
-        // Giveaway posts are rare; if they happen, avoid spammy "rules/join/dm" patterns.
-        if (catForAttempt === 'giveaway' && looksLikeGiveawaySpam(out)) {
-          throw new Error('Giveaway output looked spammy')
+        const clarityErr = validatePostClarity(out, catForAttempt)
+        if (clarityErr) {
+          lastErr = new Error(`Low-quality output: ${clarityErr}`)
+          continue
         }
 
-        // Enforce visible structure and sensible length so it reads like a real post.
-        if (!validateFormat(out, fmtForAttempt)) throw new Error('Output failed format/structure validation')
-        if (!lengthOk(out, fmtForAttempt)) throw new Error('Output length looked off')
-
-        if (!isTooSimilar(out, history)) {
+        if (out && !isTooSimilar(out, history)) {
           text = out
           // Save history with the actual attempt meta.
           await appendHistory(userId, {
