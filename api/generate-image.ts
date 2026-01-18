@@ -527,7 +527,7 @@ export default async function handler(req: any, res: any) {
 
     if (looksLikeQuota429) {
       return json(res, 429, {
-        error: 'Daily image quota exceeded. Please try again after the quota resets.',
+        error: 'Daily image quota exceeded. Please try again after the quota resets. Or copy basepost and paste on Gemini ai and chose any photo style',
         code: 'QUOTA_EXHAUSTED',
       })
     }
