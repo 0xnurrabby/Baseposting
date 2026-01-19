@@ -19,8 +19,30 @@ export type RoadmapItem = {
  * - Set tone: 'red' for the latest update.
  * - Older/done items: tone: 'green'.
  */
-export const ROADMAP: RoadmapItem[] = [
-             {
+export const ROADMAP: RoadmapItem[] = [             
+
+{
+  id: '2026-01-18-Add-Leaderbord-feature',
+  date: '18.01.2026',
+  title: 'Add Leaderbord feature',
+  text: 'Leaderboard added to track top BasePosters credits spents. See rank, stats, and compete socially—optimized for base Mini App virality patterns.',
+  tone: 'green',
+},
+  {
+  id: '2026-01-19-Enhanced-post-generation',
+  date: '19.01.2026',
+  title: 'Enhanced post generation',
+  text: 'More unique Base-focused posts with better topic variety and rotating formats. Smarter fallback + crash-safe generation to prevent server errors.',
+  tone: 'red',
+},
+{
+  id: '2026-01-17-Add-photo-generation',
+  date: '17.01.2026',
+  title: 'Add photo generation style',
+  text: 'Generate post-matching images in multiple styles (e.g., Anime/Storybook/watercolor) for more engaging shares. Designed to look good in-feed with clean previews.',
+  tone: 'green',
+},
+  {
     id: '2026-01-16-Add-Paymaster',
     date: '16.01.2026',
     title: 'Get Credit with 0 gas⚡',
