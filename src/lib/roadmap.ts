@@ -32,7 +32,7 @@ export const ROADMAP: RoadmapItem[] = [
   id: '2026-01-19-Enhanced-post-generation',
   date: '19.01.2026',
   title: 'Enhanced post generation',
-  text: 'More unique Base-focused posts with better topic variety and rotating formats. Smarter fallback + crash-safe generation to prevent server errors.',
+  text: 'More unique Base-focused posts with better topic variety and rotating formats. Smarter fallback + crash-safe generation to prevent server errors. And it will be updated constantly.',
   tone: 'red',
 },
 {
