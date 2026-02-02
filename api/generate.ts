@@ -128,7 +128,7 @@ const STYLE_DECK: StyleDeck[] = [
   {
     id: 'based-notes',
     label: 'Based notes (rare)',
-    formatGuide: 'Use 2–4 lines like “Based 1: …” “Based 2: …”. Keep it short. No long paragraphs.',
+    formatGuide: 'Use 2–4 lines like “Jesse🟦: …” “Aneri🟦: …”. Keep it short. No long paragraphs.',
     anglePrompts: ['two quick observations', 'two lessons', 'two small wins'],
     weight: 0.25,
     maxTokens: 160,
