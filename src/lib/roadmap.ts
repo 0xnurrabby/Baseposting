@@ -22,6 +22,13 @@ export type RoadmapItem = {
 export const ROADMAP: RoadmapItem[] = [             
 
 {
+  id: '2026-01-18-Add-New-Data',
+  date: '03.03.2026',
+  title: 'Add new post generation data',
+  text: 'New information has been added, so that the post generation will be based on the latest information. To get the perfect post, generate the post several times and choose the post according to your preference. (#03.02.2026-03.03.2026)',
+  tone: 'green',
+},
+  {
   id: '2026-01-18-Add-Leaderbord-feature',
   date: '18.01.2026',
   title: 'Add Leaderbord feature',
