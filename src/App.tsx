@@ -1229,7 +1229,7 @@ async function waitForCallsTxHash(
 
           <Card className="mt-6">
             <CardHeader>
-              <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Generate Basepost</div>
+              <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">⚠️All operations are down due to a code issue. It will be fixed in 3-4 days.💙</div>
               <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">╰┈➤</div>
             </CardHeader>
             <CardContent>
