@@ -405,7 +405,7 @@ async function openaiGenerate(args: {
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) return fastLocalGenerate(args)
 
-  const model = process.env.OPENAI_MODEL || 'gpt-5-mini'
+  const model = process.env.OPENAI_MODEL || 'gpt-5-nano'
 
   const seed = crypto.randomUUID()
   const style = args.style
@@ -504,7 +504,7 @@ async function openaiRewriteAddBase(args: {
 }) {
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) return fastLocalGenerate(args)
-  const model = process.env.OPENAI_MODEL || 'gpt-5-mini'
+  const model = process.env.OPENAI_MODEL || 'gpt-5-nano'
 
   const system = [
     'Rewrite the user text into a Farcaster/Twitter-style post.',
