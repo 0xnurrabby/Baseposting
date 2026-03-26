@@ -1,0 +1,33 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
+    },
+    {
+      "source": "/.well-known/(.*)",
+      "destination": "/.well-known/$1"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ],
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/generate.ts": {
+      "maxDuration": 60
+    },
+    "api/generate-image.ts": {
+      "maxDuration": 60
+    },
+    "api/verify-tx.ts": {
+      "maxDuration": 60
+    },
+    "api/leaderboard.ts": {
+      "maxDuration": 60
+    }
+  }
+}
