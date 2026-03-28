@@ -13,6 +13,9 @@ export default function middleware(request) {
   const hasBypassCookie = cookies.includes('maint_bypass=1');
 
   if (!maintenanceMode) {
+    if (url.pathname === '/maintenance.html') {
+      return Response.redirect(new URL('/', request.url), 302);
+    }
     return;
   }
 
