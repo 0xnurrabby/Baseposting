@@ -3,30 +3,19 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>BasePosting — Under Maintenance</title>
+  <title>BasePosting — Maintenance</title>
 
   <style>
     :root{
       --bg:#f7f7f6;
       --grid:rgba(17,24,39,.08);
       --card:#ffffff;
-      --card-2:#fafafa;
       --line:#e7e7e7;
       --text:#161616;
-      --muted:#666;
-      --muted-2:#8a8a8a;
-      --chip:#f3f3f3;
-      --chip-line:#e6e6e6;
-      --shadow:0 8px 30px rgba(0,0,0,.05);
-
-      --blue:#4f6df5;
-      --blue-soft:#eef2ff;
-      --green:#2f9e44;
-      --green-soft:#edf9f0;
+      --muted:#6b6b6b;
       --orange:#f08c00;
       --orange-soft:#fff4e6;
-      --pink:#e64980;
-      --pink-soft:#fff0f6;
+      --shadow:0 8px 24px rgba(0,0,0,.05);
     }
 
     *{box-sizing:border-box}
@@ -34,9 +23,8 @@
 
     body{
       margin:0;
-      min-height:100vh;
-      color:var(--text);
       font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color:var(--text);
       background:
         radial-gradient(circle at 1px 1px, var(--grid) 1px, transparent 0);
       background-size:22px 22px;
@@ -50,102 +38,41 @@
       padding:24px;
     }
 
-    .app-shell{
-      width:min(100%, 620px);
-    }
-
-    .topbar{
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:12px;
-      margin-bottom:16px;
+    .wrap{
+      width:min(100%, 560px);
     }
 
     .brand{
-      display:flex;
-      align-items:center;
-      gap:10px;
-      min-width:0;
-    }
-
-    .brand h1{
-      margin:0;
-      font-size:clamp(28px, 4vw, 38px);
+      margin:0 0 10px;
+      font-size:40px;
       line-height:1;
       letter-spacing:-.04em;
       font-weight:800;
-    }
-
-    .credits{
-      height:30px;
-      padding:0 10px;
-      border-radius:999px;
-      background:#f5f5f5;
-      border:1px solid var(--chip-line);
-      display:inline-flex;
-      align-items:center;
-      font-size:13px;
-      font-weight:600;
-      color:#555;
-      white-space:nowrap;
-    }
-
-    .toolbar{
-      display:flex;
-      align-items:center;
-      gap:10px;
-      flex-wrap:wrap;
-      justify-content:flex-end;
-    }
-
-    .tool{
-      height:40px;
-      padding:0 14px;
-      border-radius:14px;
-      border:1px solid var(--chip-line);
-      background:#fff;
-      display:inline-flex;
-      align-items:center;
-      gap:8px;
-      color:#333;
-      font-size:14px;
-      font-weight:600;
-      box-shadow:0 2px 10px rgba(0,0,0,.03);
-    }
-
-    .tool svg{
-      width:16px;
-      height:16px;
-      opacity:.8;
-      flex:0 0 auto;
+      text-align:center;
     }
 
     .sub{
       margin:0 0 18px;
-      color:#5f5f5f;
+      text-align:center;
+      color:var(--muted);
       font-size:15px;
-      line-height:1.55;
     }
 
     .card{
       background:var(--card);
       border:1px solid var(--line);
-      border-radius:22px;
+      border-radius:24px;
       box-shadow:var(--shadow);
-    }
-
-    .hero{
-      padding:18px;
-      margin-bottom:14px;
+      padding:24px;
+      text-align:center;
     }
 
     .status{
       display:inline-flex;
       align-items:center;
       gap:8px;
-      height:32px;
-      padding:0 12px;
+      height:34px;
+      padding:0 14px;
       border-radius:999px;
       background:var(--orange-soft);
       color:#7a4a00;
@@ -163,340 +90,51 @@
       flex:0 0 auto;
     }
 
-    .hero h2{
+    h2{
       margin:0 0 10px;
-      font-size:clamp(30px, 5vw, 44px);
-      line-height:1.02;
+      font-size:38px;
+      line-height:1.05;
       letter-spacing:-.04em;
       font-weight:800;
     }
 
-    .hero p{
+    p{
       margin:0;
       color:var(--muted);
       font-size:16px;
       line-height:1.65;
-      max-width:54ch;
-    }
-
-    .grid{
-      display:grid;
-      grid-template-columns:1fr 1fr;
-      gap:14px;
-      margin-bottom:14px;
-    }
-
-    .panel{
-      padding:16px;
-      background:var(--card);
-      border:1px solid var(--line);
-      border-radius:20px;
-      box-shadow:var(--shadow);
-    }
-
-    .panel h3{
-      margin:0 0 8px;
-      font-size:16px;
-      font-weight:700;
-      letter-spacing:-.02em;
-    }
-
-    .panel p{
-      margin:0;
-      color:var(--muted);
-      font-size:14px;
-      line-height:1.6;
-    }
-
-    .stack{
-      display:flex;
-      flex-wrap:wrap;
-      gap:10px;
-      margin-top:14px;
-    }
-
-    .pill{
-      min-height:34px;
-      padding:0 12px;
-      border-radius:999px;
-      display:inline-flex;
-      align-items:center;
-      font-size:13px;
-      font-weight:700;
-      border:1px solid transparent;
-    }
-
-    .pill.blue{background:var(--blue-soft); color:#3148b8; border-color:#dfe5ff;}
-    .pill.green{background:var(--green-soft); color:#1f7a33; border-color:#d7f0dd;}
-    .pill.pink{background:var(--pink-soft); color:#b42a61; border-color:#ffd4e4;}
-
-    .generator{
-      padding:18px;
-      background:var(--card);
-      border:1px solid var(--line);
-      border-radius:22px;
-      box-shadow:var(--shadow);
-      margin-bottom:14px;
-    }
-
-    .generator-top{
-      display:flex;
-      align-items:flex-start;
-      justify-content:space-between;
-      gap:12px;
-      margin-bottom:14px;
-    }
-
-    .generator-title{
-      min-width:0;
-    }
-
-    .generator-title h3{
-      margin:0 0 6px;
-      font-size:16px;
-      font-weight:700;
-    }
-
-    .generator-title p{
-      margin:0;
-      color:var(--muted-2);
-      font-size:14px;
-      line-height:1.5;
-    }
-
-    .badge{
-      height:34px;
-      padding:0 12px;
-      border-radius:12px;
-      background:#f8f8f8;
-      border:1px solid var(--chip-line);
-      display:inline-flex;
-      align-items:center;
-      color:#666;
-      font-size:13px;
-      font-weight:700;
-      white-space:nowrap;
-    }
-
-    .big-cta{
-      width:100%;
-      height:44px;
-      border-radius:12px;
-      border:1px solid #d7d7d7;
-      background:#a8a8a8;
-      color:#fff;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      font-size:15px;
-      font-weight:700;
-      margin-bottom:12px;
-    }
-
-    .actions{
-      display:grid;
-      grid-template-columns:repeat(4,1fr);
-      gap:10px;
-      margin-bottom:12px;
-    }
-
-    .action{
-      min-height:42px;
-      border-radius:12px;
-      border:1px solid var(--chip-line);
-      background:#f9f9f9;
-      color:#7a7a7a;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      text-align:center;
-      padding:8px 10px;
-      font-size:13px;
-      font-weight:600;
-    }
-
-    .notice{
-      border:1px solid #eadf9a;
-      background:#fffbe8;
-      border-radius:16px;
-      padding:14px;
-    }
-
-    .notice p{
-      margin:0 0 10px;
-      color:#7a6920;
-      font-size:13px;
-      line-height:1.55;
-    }
-
-    .mini-btn{
-      height:38px;
-      padding:0 14px;
-      border-radius:12px;
-      border:1px solid var(--chip-line);
-      background:#fff;
-      display:inline-flex;
-      align-items:center;
-      font-size:14px;
-      font-weight:700;
-      color:#333;
     }
 
     .footer{
+      margin-top:16px;
       text-align:center;
-      color:#8c8c8c;
+      color:#9a9a9a;
       font-size:13px;
-      margin-top:18px;
     }
 
-    .skeleton{
-      position:relative;
-      overflow:hidden;
-    }
-
-    .skeleton::after{
-      content:"";
-      position:absolute;
-      inset:0;
-      transform:translateX(-100%);
-      background:linear-gradient(90deg, transparent, rgba(255,255,255,.45), transparent);
-      animation:shimmer 2.2s infinite;
-    }
-
-    @keyframes shimmer{
-      100%{transform:translateX(100%)}
-    }
-
-    @media (max-width: 720px){
-      .page{padding:16px}
-      .topbar{
-        flex-direction:column;
-        align-items:flex-start;
-      }
-      .toolbar{
-        width:100%;
-        justify-content:flex-start;
-      }
-      .grid{
-        grid-template-columns:1fr;
-      }
-      .actions{
-        grid-template-columns:1fr 1fr;
-      }
-    }
-
-    @media (max-width: 460px){
-      .actions{
-        grid-template-columns:1fr;
-      }
-      .tool{
-        width:100%;
-        justify-content:center;
-      }
-    }
-
-    @media (prefers-reduced-motion: reduce){
-      .skeleton::after{
-        animation:none;
-      }
+    @media (max-width: 640px){
+      .brand{font-size:34px}
+      h2{font-size:32px}
+      .card{padding:20px}
     }
   </style>
 </head>
 <body>
   <main class="page">
-    <div class="app-shell">
-      <header class="topbar">
-        <div class="brand">
-          <h1>BasePosting</h1>
-          <div class="credits">2 credits</div>
-        </div>
-
-        <div class="toolbar">
-          <div class="tool">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M4 19h16"></path>
-              <path d="M5 15V8"></path>
-              <path d="M12 15V5"></path>
-              <path d="M19 15v-4"></path>
-              <path d="M8 19v-2"></path>
-              <path d="M12 19v-2"></path>
-              <path d="M16 19v-2"></path>
-            </svg>
-            Leaderboard
-          </div>
-
-          <div class="tool">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 3a6 6 0 0 0 0 12 6 6 0 1 1 0-12z"></path>
-            </svg>
-            Dark
-          </div>
-        </div>
-      </header>
-
+    <div class="wrap">
+      <h1 class="brand">BasePosting</h1>
       <p class="sub">Stay consistent, stay based, post banger 💙</p>
 
-      <section class="card hero">
+      <section class="card">
         <div class="status">
           <span class="dot"></span>
           Maintenance in progress
         </div>
 
-        <h2>BasePosting is taking a short pause.</h2>
+        <h2>We’ll be back soon.</h2>
         <p>
-          We’re tuning the post generator, polishing the image flow, and cleaning up a few rough edges.
-          Your next session should feel smoother when we’re back.
+          BasePosting is temporarily unavailable while we make a few improvements.
         </p>
-      </section>
-
-      <section class="grid">
-        <article class="panel">
-          <h3>What’s being worked on</h3>
-          <p>
-            Generator quality, image generation flow, wallet-related polish, and a bit of interface cleanup.
-          </p>
-
-          <div class="stack">
-            <span class="pill blue">Post ideas</span>
-            <span class="pill green">Image flow</span>
-            <span class="pill pink">Wallet UX</span>
-          </div>
-        </article>
-
-        <article class="panel">
-          <h3>What this means for you</h3>
-          <p>
-            The app is temporarily locked for public use. Private access still works through your maintenance key.
-          </p>
-        </article>
-      </section>
-
-      <section class="generator">
-        <div class="generator-top">
-          <div class="generator-title">
-            <h3>Post generator</h3>
-            <p>Temporarily paused while maintenance is active.</p>
-          </div>
-
-          <div class="badge">Generate Photo</div>
-        </div>
-
-        <div class="big-cta skeleton">Generate (-1c)</div>
-
-        <div class="actions">
-          <div class="action">Connect Wallet</div>
-          <div class="action">Get Credit</div>
-          <div class="action">Share for credit</div>
-          <div class="action">Tip Me</div>
-        </div>
-
-        <div class="notice">
-          <p>
-            Some app actions are unavailable right now while maintenance is active.
-            If you’re the owner, open the site using your secret key URL to bypass this screen.
-          </p>
-          <div class="mini-btn">Back soon</div>
-        </div>
       </section>
 
       <div class="footer">© Copyright 2026</div>
