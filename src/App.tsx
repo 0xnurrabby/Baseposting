@@ -1203,7 +1203,7 @@ async function waitForCallsTxHash(
 
           <Card className="mt-6">
             <CardHeader>
-              <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{walletConnected ? 'Wallet connected. All core features are unlocked.' : 'Connect wallet first. This app now works in browser and in Base/Farcaster mini apps.'}</div>
+              <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{walletConnected ? 'Wallet connected. All core features are unlocked.' : 'Connect wallet first.'}</div>
             </CardHeader>
             <CardContent>
               <div className="flex flex-col gap-3">
