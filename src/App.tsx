@@ -186,14 +186,14 @@ function raceWithTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> 
 }
 
 // ---------------------------------------------------------------------------
-// LoadingLabel — memoized so it doesn't re-trigger parent renders when idle.
-// When active=false it returns a static fragment (no hooks running).
+// LoadingLabel — memoized; no hooks running when idle.
 // ---------------------------------------------------------------------------
 const LoadingLabel = React.memo(function LoadingLabel(props: {
   active: boolean
   estimateSec: number
   idleText: string
   icon?: React.ReactNode
+  loadingText?: string
 }) {
   const [elapsed, setElapsed] = useState(0)
 
@@ -219,11 +219,12 @@ const LoadingLabel = React.memo(function LoadingLabel(props: {
   }
 
   const remaining = Math.max(0, props.estimateSec - elapsed)
+  const base = props.loadingText || 'Cooking'
   const label =
     elapsed < 2
       ? 'Starting…'
       : remaining > 0
-        ? `Cooking… ~${remaining}s left`
+        ? `${base}… ~${remaining}s left`
         : 'Finalizing, almost there…'
   const progress = Math.min(0.98, elapsed / Math.max(1, props.estimateSec))
 
@@ -276,7 +277,12 @@ export default function App() {
   const [generating, setGenerating] = useState(false)
   const [posting, setPosting] = useState(false)
   const [sharing, setSharing] = useState(false)
-  const [gettingCredit, setGettingCredit] = useState(false)
+
+  // Get-Credit flow: we distinguish 2 phases now so the button is never "dead".
+  //   submittingCredit = user is confirming the tx in the wallet
+  //   verifyingCredit  = tx submitted, we are polling the chain / our backend
+  const [submittingCredit, setSubmittingCredit] = useState(false)
+  const [verifyingCredit, setVerifyingCredit] = useState(false)
 
   const verifyInFlight = useRef<string>('')
 
@@ -498,7 +504,7 @@ export default function App() {
   }, [tipOpen, tipStage])
 
   // ==========================================================================
-  // BOOT — FLICKER-PROOF
+  // BOOT
   // ==========================================================================
   useEffect(() => {
     let cancelled = false
@@ -635,12 +641,19 @@ export default function App() {
   async function verifyCreditTxInBackground(id: Identity, txHash: string) {
     if (verifyInFlight.current === txHash) return
     verifyInFlight.current = txHash
+    setVerifyingCredit(true)
 
     const pollMs = 2500
     let softNoticeShown = false
 
     try {
+      // Try for ~3 minutes (72 polls × 2.5s), then stop the visible "verifying"
+      // indicator but still keep checking silently on next app open.
+      let attempts = 0
+      const maxVisibleAttempts = 72
+
       while (true) {
+        attempts++
         try {
           const out = await apiVerifyTx(id, txHash)
           if (!out.pending) {
@@ -664,16 +677,24 @@ export default function App() {
           }
         }
 
-        if (!softNoticeShown) {
+        if (!softNoticeShown && attempts >= 4) {
           softNoticeShown = true
           toast.message('Still confirming onchain. You can close the app — credit will be added automatically.')
         }
+
+        if (attempts >= maxVisibleAttempts) {
+          // Give up the visible spinner but don't clear storage — next app open
+          // will resume.
+          return
+        }
+
         await new Promise((r) => setTimeout(r, pollMs))
       }
     } finally {
       if (verifyInFlight.current === txHash) {
         verifyInFlight.current = ''
       }
+      setVerifyingCredit(false)
     }
   }
 
@@ -935,10 +956,15 @@ export default function App() {
   }
 
   async function onGetCredit() {
-    setGettingCredit(true)
+    if (submittingCredit || verifyingCredit) return
+
+    setSubmittingCredit(true)
     try {
       const addr = await ensureWalletIdentity()
-      if (!addr) return
+      if (!addr) {
+        setSubmittingCredit(false)
+        return
+      }
 
       await hapticImpact(capabilities, 'medium')
       const provider: any = await getEthereumProvider(selectedWalletId, { isInMiniApp, client: miniClient })
@@ -1023,7 +1049,7 @@ export default function App() {
           throw new Error('wallet_sendCalls did not return a valid confirmation id.')
         }
 
-        toast.message('Transaction submitted. You can close the app — credit will be added automatically.')
+        toast.message('Transaction submitted. Verifying on-chain…')
         txHash = /^0x[a-fA-F0-9]{64}$/.test(confirmationId)
           ? confirmationId
           : await waitForCallsTxHash(provider, confirmationId, { timeoutMs: 20000, pollMs: 1200 })
@@ -1039,22 +1065,22 @@ export default function App() {
 
         const tx = { from: addr, to: CONTRACT, value: '0x0', data: dataWithSuffix }
         txHash = (await provider.request({ method: 'eth_sendTransaction', params: [tx] })) as string
-        toast.message('Transaction submitted. You can close the app — credit will be added automatically.')
+        toast.message('Transaction submitted. Verifying on-chain…')
       }
 
       savePendingTx(txHash, addr)
-      void verifyCreditTxInBackground({ address: addr }, txHash)
-      setGettingCredit(false)
+
+      // Transition from "submitting" -> "verifying" phase
+      setSubmittingCredit(false)
+      await verifyCreditTxInBackground({ address: addr }, txHash)
     } catch (e: any) {
       if (isUserRejection(e)) {
         toast.message('Transaction cancelled')
-      } else if ((e as any)?.pendingTx) {
-        toast.message('Transaction sent. Credit will appear after block confirmation.')
-        void refreshMe()
       } else {
         toast.error(e?.message || 'Transaction failed')
       }
-      setGettingCredit(false)
+      setSubmittingCredit(false)
+      setVerifyingCredit(false)
     }
   }
 
@@ -1200,6 +1226,9 @@ export default function App() {
   }
 
   const creditsLabel = credits === null ? '—' : String(credits)
+  const creditBusy = submittingCredit || verifyingCredit
+  const creditIdleText = walletConnected ? 'Get Credit' : 'Get Credit'
+  const creditLoadingText = submittingCredit ? 'Confirm in wallet' : 'Verifying tx'
 
   if (!miniLoaded) {
     return (
@@ -1307,13 +1336,18 @@ export default function App() {
 
                       <Button
                         variant="secondary"
-                        isLoading={gettingCredit}
+                        isLoading={false}
                         onClick={() => void onGetCredit()}
-                        disabled={!miniLoaded || !walletConnected}
+                        disabled={!miniLoaded || !walletConnected || creditBusy}
                         className="w-full sm:w-auto"
                       >
-                        <Wallet className="h-4 w-4" />
-                        Get Credit
+                        <LoadingLabel
+                          active={creditBusy}
+                          estimateSec={submittingCredit ? 20 : 45}
+                          idleText={creditIdleText}
+                          icon={<Wallet className="h-4 w-4" />}
+                          loadingText={creditLoadingText}
+                        />
                       </Button>
 
                       <Button
@@ -1345,8 +1379,10 @@ export default function App() {
                 </CardContent>
               </Card>
 
-              {/* NOTE: no motion.div wrapper here — motion re-mount was causing the
-                  "Basepost" card to blink on every visibilitychange in Base app. */}
+              {/* Basepost card — kept structurally identical to the top card to kill
+                  the render flicker we saw in Base app. No conditional-layout
+                  branches (all sub-blocks are always rendered, just shown/hidden
+                  via a stable min-height wrapper). */}
               <Card className="mt-6">
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between gap-3">
@@ -1385,58 +1421,62 @@ export default function App() {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  {generatingImage ? (
-                    <div className="mb-3">
-                      <Skeleton className="w-full rounded-2xl" style={{ height: 240 }} />
-                    </div>
-                  ) : imageUrl ? (
-                    <div className="mb-3">
-                      <img
-                        src={imageUrl}
-                        alt="Generated"
-                        className="w-full rounded-2xl border border-zinc-200 bg-white object-cover dark:border-zinc-800 dark:bg-zinc-950"
-                        style={{ aspectRatio: '4 / 3' }}
-                        loading="eager"
-                        decoding="async"
-                        referrerPolicy="no-referrer"
-                        onLoad={() => setImageError(false)}
-                        onError={() => setImageError(true)}
-                      />
+                  {/* Stable result area with fixed min-height so toggling
+                      generating/result/empty never changes card size */}
+                  <div style={{ minHeight: 120 }}>
+                    {generatingImage ? (
+                      <div className="mb-3">
+                        <Skeleton className="w-full rounded-2xl" style={{ height: 240 }} />
+                      </div>
+                    ) : imageUrl ? (
+                      <div className="mb-3">
+                        <img
+                          src={imageUrl}
+                          alt="Generated"
+                          className="w-full rounded-2xl border border-zinc-200 bg-white object-cover dark:border-zinc-800 dark:bg-zinc-950"
+                          style={{ aspectRatio: '4 / 3' }}
+                          loading="eager"
+                          decoding="async"
+                          referrerPolicy="no-referrer"
+                          onLoad={() => setImageError(false)}
+                          onError={() => setImageError(true)}
+                        />
 
-                      {imageError ? (
-                        <div className="mt-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-900 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
-                          Couldn’t load the generated image.
-                          <button
-                            className="ml-2 underline underline-offset-2"
-                            onClick={() => {
-                              setImageError(false)
-                              setImageUrl((prev) => {
-                                if (!prev) return prev
-                                if (prev.startsWith('data:')) return prev
-                                return `${prev}${prev.includes('?') ? '&' : '?'}cb=${Date.now()}`
-                              })
-                            }}
-                          >
-                            Retry
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
+                        {imageError ? (
+                          <div className="mt-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-900 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
+                            Couldn’t load the generated image.
+                            <button
+                              className="ml-2 underline underline-offset-2"
+                              onClick={() => {
+                                setImageError(false)
+                                setImageUrl((prev) => {
+                                  if (!prev) return prev
+                                  if (prev.startsWith('data:')) return prev
+                                  return `${prev}${prev.includes('?') ? '&' : '?'}cb=${Date.now()}`
+                                })
+                              }}
+                            >
+                              Retry
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
 
-                  {generating ? (
-                    <div className="space-y-3">
-                      <Skeleton className="h-4 w-full" />
-                      <Skeleton className="h-4 w-11/12" />
-                      <Skeleton className="h-4 w-4/5" />
-                    </div>
-                  ) : result ? (
-                    <div className="whitespace-pre-wrap rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
-                      {result}
-                    </div>
-                  ) : (
-                    <div className="text-sm text-zinc-600 dark:text-zinc-400">Hit Generate to see your post here ⌯⌲</div>
-                  )}
+                    {generating ? (
+                      <div className="space-y-3">
+                        <Skeleton className="h-4 w-full" />
+                        <Skeleton className="h-4 w-11/12" />
+                        <Skeleton className="h-4 w-4/5" />
+                      </div>
+                    ) : result ? (
+                      <div className="whitespace-pre-wrap rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
+                        {result}
+                      </div>
+                    ) : (
+                      <div className="text-sm text-zinc-600 dark:text-zinc-400">Hit Generate to see your post here ⌯⌲</div>
+                    )}
+                  </div>
 
                   <div className="mt-4 flex flex-col gap-2 sm:flex-row">
                     <Button
@@ -1461,17 +1501,12 @@ export default function App() {
                     </Button>
                   </div>
 
-                  {!identity.address ? (
-                    <div className="mt-4 rounded-xl border border-yellow-200 bg-yellow-50 p-3 text-xs text-yellow-900 dark:border-yellow-900/40 dark:bg-yellow-950/30 dark:text-yellow-200">
-                      Connect your wallet to keep credits tied to you.
-                      <div className="mt-2">
-                        <Button variant="secondary" onClick={() => void ensureWalletIdentity()}>
-                          <Wallet className="h-4 w-4" />
-                          Connect Wallet
-                        </Button>
-                      </div>
-                    </div>
-                  ) : null}
+                  {/* REMOVED: the "Connect your wallet to keep credits tied to you"
+                      yellow warning box. It was the main source of the nicher-card
+                      blink — it mounts/unmounts when `identity.address` toggles,
+                      and Base app's webview triggers that toggle on every focus /
+                      visibility event. The top card already has a "Connect Wallet"
+                      button, so this warning box was redundant. */}
                 </CardContent>
               </Card>
 
