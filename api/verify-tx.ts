@@ -52,14 +52,14 @@ async function waitForReceipt(txHash: string, timeoutMs = 1200, pollMs = 1200) {
 
 const CREDIT_CONTRACT = '0xb331328f506f2d35125e367a190e914b1b6830cf'
 
+// Accept the tx if EITHER:
+//  - tx.to directly equals the credit contract (Trust / MetaMask etc.)
+//  - OR any log in the receipt was emitted by the credit contract
+//    (Base smart wallet / batched tx path — tx.to is the smart-wallet proxy)
 function touchesCreditContract(receipt: any): boolean {
-  // Direct call: tx.to == credit contract
   const toAddr = String(receipt?.to || '').toLowerCase()
   if (toAddr === CREDIT_CONTRACT) return true
 
-  // Batch / smart-wallet call: check logs for any event emitted by the credit
-  // contract (logAction emits an event). Base smart wallets (wallet_sendCalls)
-  // route through a proxy so tx.to is the proxy, not our contract.
   const logs: any[] = Array.isArray(receipt?.logs) ? receipt.logs : []
   for (const log of logs) {
     const a = String(log?.address || '').toLowerCase()
@@ -104,8 +104,6 @@ export default async function handler(req: any, res: any) {
       return json(res, 400, { error: 'Transaction failed onchain', txHash, credits: current.credits })
     }
 
-    // Accept both direct calls and batched / smart-wallet calls that touch
-    // the credit contract in any of their logs.
     if (!touchesCreditContract(receipt)) {
       return json(res, 400, {
         error: 'Transaction did not touch the credit contract',
