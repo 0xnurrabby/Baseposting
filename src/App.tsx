@@ -10,7 +10,7 @@ import { RoadmapBell } from '@/components/RoadmapBell'
 import { LeaderboardPage } from '@/components/LeaderboardPage'
 import { LeaderboardIcon } from '@/components/LeaderboardIcon'
 import { apiGenerate, apiMe, apiShareAward, apiVerifyTx, type Identity } from '@/lib/api'
-import { composeCast, connectWalletProvider, getEthereumProvider, hapticImpact, hapticSelection, initMiniApp, listAvailableWallets, shareToTwitter, type WalletOption } from '@/lib/miniapp'
+import { connectWalletProvider, getEthereumProvider, hapticImpact, hapticSelection, initMiniApp, listAvailableWallets, shareToTwitter, type WalletOption } from '@/lib/miniapp'
 
 const CONTRACT = '0xB331328F506f2D35125e367A190e914B1b6830cF'
 
@@ -60,9 +60,9 @@ function randInt(maxExclusive: number) {
   }
 }
 
-function getRotatingShareCopy(siteUrl: string) {
+function getRotatingShareCopy(siteUrl: string): { text: string; url: string } {
   const url = normalizeSiteUrl(siteUrl)
-  if (!url) return ''
+  if (!url) return { text: '', url: '' }
 
   const storageKey = 'bp_share_copy_pool_v1'
   let pool: number[] = []
@@ -92,7 +92,10 @@ function getRotatingShareCopy(siteUrl: string) {
     // ignore
   }
 
-  return SHARE_COPY_TEMPLATES[idx]?.replace('{url}', url) ?? `Try it: ${url}`
+  // Return text WITHOUT the URL; shareToTwitter will add the URL separately.
+  const raw = SHARE_COPY_TEMPLATES[idx] ?? 'Try it: {url}'
+  const text = raw.replace(' {url}', '').replace('{url}', '').trim()
+  return { text, url }
 }
 
 const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
@@ -734,9 +737,9 @@ export default function App() {
       id = { address: addr }
     }
 
-    const currentCredits = creditsRef.current ?? 1
-    if (currentCredits < 1) {
-      toast.error('No credits left')
+    const currentCredits = creditsRef.current ?? 3
+    if (currentCredits < 3) {
+      toast.error('Need 3 credits to generate')
       return
     }
 
@@ -752,7 +755,7 @@ export default function App() {
       const status = (e as any)?.status
       if (status === 402) {
         setCredits((e as any)?.data?.credits ?? 0)
-        toast.error('No credits left')
+        toast.error('Not enough credits (need 3)')
       } else {
         toast.error(e?.message || 'Generation failed')
       }
@@ -773,7 +776,6 @@ export default function App() {
     }
   }, [])
 
-  // POST DIRECTLY → Twitter / X (not Farcaster)
   const onPostDirectly = useCallback(async () => {
     const current = resultRef.current
     if (!current) return
@@ -788,6 +790,8 @@ export default function App() {
     }
   }, [])
 
+  // Share for 6 credit: now uses Twitter (same as Post to X).
+  // Award happens when user returns to the app (visibilitychange effect).
   const onShareForCredits = useCallback(async () => {
     if (!shareEligible) {
       toast.message('Share bonus already claimed today')
@@ -796,44 +800,45 @@ export default function App() {
     setSharing(true)
     try {
       await hapticImpact(capabilitiesRef.current, 'medium')
-      const shareUrl = normalizeSiteUrl(SITE_URL)
-      const shareText = getRotatingShareCopy(SITE_URL)
+      const { text, url } = getRotatingShareCopy(SITE_URL)
       setPendingToast('message', 'Welcome back ✅ Adding your share bonus…')
       try {
         sessionStorage.setItem(PENDING_SHARE_AWARD_KEY, '1')
       } catch {
         // ignore
       }
-      void composeCast({ text: shareText, embeds: shareUrl ? [shareUrl] : undefined })
 
-      const awardIfPending = async () => {
-        try {
-          setCredits((prev) => Math.max(0, (prev ?? 0) + 6))
-          const award = await apiShareAward(identityRef.current)
-          setCredits(award.credits)
-          setShareEligible(false)
-          setTodayUtc(award.todayUtc)
-          toast.success(award.alreadyClaimed ? 'Already claimed today' : '+6 credits added 💙')
-        } catch {
-          // ignore
-        }
-      }
+      shareToTwitter({ text, url })
+
+      // Best-effort fallback: if the user stays on this tab (desktop popup
+      // case), award after 3s anyway.
       setTimeout(() => {
         try {
           if (document.visibilityState !== 'visible') return
           const pending = sessionStorage.getItem(PENDING_SHARE_AWARD_KEY)
           if (!pending) return
           sessionStorage.removeItem(PENDING_SHARE_AWARD_KEY)
-          void awardIfPending()
+          void (async () => {
+            try {
+              setCredits((prev) => Math.max(0, (prev ?? 0) + 6))
+              const award = await apiShareAward(identityRef.current)
+              setCredits(award.credits)
+              setShareEligible(false)
+              setTodayUtc(award.todayUtc)
+              toast.success(award.alreadyClaimed ? 'Already claimed today' : '+6 credits added 💙')
+            } catch {
+              // ignore
+            }
+          })()
         } catch {
           // ignore
         }
-      }, 900)
+      }, 3000)
     } catch (e: any) {
       if (isUserRejection(e)) return toast.message('Share cancelled')
       toast.error(e?.message || 'Share failed')
     } finally {
-      setSharing(false)
+      setTimeout(() => setSharing(false), 500)
     }
   }, [shareEligible])
 
@@ -917,9 +922,6 @@ export default function App() {
         args: [action, payload],
       })
 
-      // Universal tx submission:
-      //   1) Try wallet_sendCalls (Base smart wallet / Coinbase)
-      //   2) Fallback to eth_sendTransaction (Trust / Bitget / MetaMask / Rabby / OKX)
       let txHash = ''
       let usedFallback = false
 
@@ -934,8 +936,6 @@ export default function App() {
           from: addr,
           to: CONTRACT,
           data,
-          // NOTE: `value` is intentionally omitted. Trust wallet returns
-          // "invalid request" when `value: '0x0'` is present.
         }
         return (await provider.request({ method: 'eth_sendTransaction', params: [tx] })) as string
       }
@@ -968,7 +968,6 @@ export default function App() {
         if (isMethodNotSupported(e) || isInvalidParamsOrCapability(e)) {
           usedFallback = true
         } else {
-          // Unknown error — still try the legacy path as a safety net
           usedFallback = true
         }
       }
@@ -1040,7 +1039,6 @@ export default function App() {
 
       setTipStage('confirm')
 
-      // Try wallet_sendCalls, fallback to eth_sendTransaction
       let submitted = false
       try {
         await provider.request({
@@ -1056,9 +1054,7 @@ export default function App() {
         submitted = true
       } catch (e: any) {
         if (isUserRejection(e)) throw e
-        if (!isMethodNotSupported(e) && !isInvalidParamsOrCapability(e)) {
-          // proceed to fallback anyway
-        }
+        // proceed to legacy path
       }
 
       if (!submitted) {
@@ -1172,7 +1168,7 @@ export default function App() {
                       <LoadingLabel
                         active={generating}
                         estimateSec={20}
-                        idleText="Generate (-1c)"
+                        idleText="Generate (-3c)"
                         icon={<Sparkles className="h-4 w-4" />}
                       />
                     </Button>
