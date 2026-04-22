@@ -15,11 +15,28 @@ function toUserId(body: any) {
 }
 
 function pickText(item: any): string {
-  return item?.text || item?.fullText || item?.tweetText || item?.content || item?.caption || item?.tweet?.full_text || item?.tweet?.text || ''
+  return (
+    item?.text ||
+    item?.fullText ||
+    item?.tweetText ||
+    item?.content ||
+    item?.caption ||
+    item?.tweet?.full_text ||
+    item?.tweet?.text ||
+    ''
+  )
 }
 
 function pickAuthor(item: any): string {
-  return item?.author || item?.authorName || item?.userName || item?.username || item?.user?.name || item?.user?.username || 'unknown'
+  return (
+    item?.author ||
+    item?.authorName ||
+    item?.userName ||
+    item?.username ||
+    item?.user?.name ||
+    item?.user?.username ||
+    'unknown'
+  )
 }
 
 function normalizePosts(items: any[], max: number) {
@@ -30,6 +47,10 @@ function normalizePosts(items: any[], max: number) {
       return {
         author: String(pickAuthor(it) || 'unknown').trim() || 'unknown',
         text: text.replace(/\s+/g, ' ').trim(),
+        createdAt: it?.createdAt || it?.time || it?.timestamp || it?.date || null,
+        likeCount: it?.likeCount ?? it?.likes ?? it?.favoriteCount ?? null,
+        replyCount: it?.replyCount ?? it?.replies ?? null,
+        repostCount: it?.retweetCount ?? it?.reposts ?? it?.quoteCount ?? null,
       }
     })
     .filter(Boolean) as any[]
@@ -64,15 +85,72 @@ type StyleDeck = {
 }
 
 const STYLE_DECK: StyleDeck[] = [
-  { id: 'one-liner', label: 'Dry humor one-liner', formatGuide: '1–2 lines. No bullets. No intro paragraph. Punchline is the last line.', anglePrompts: ['small irony', 'deadpan observation', 'subtle flex, but humble'], weight: 1.0, maxTokens: 90, maxChars: 220 },
-  { id: 'micro-story', label: 'Tiny story', formatGuide: '3–5 short lines. Story beats. Line breaks matter. End with a calm takeaway.', anglePrompts: ['moment from today', 'builder frustration -> aha', 'small win onchain'], weight: 1.0, maxTokens: 150, maxChars: 360 },
-  { id: 'checklist', label: 'Checklist', formatGuide: 'Use 3–5 lines like "-" or "- [ ]". No long paragraphs.', anglePrompts: ['shipping checklist', 'onboarding checklist', 'smart habits'], weight: 0.85, maxTokens: 170, maxChars: 420 },
-  { id: 'contrast', label: 'Then vs now', formatGuide: 'Use “Then →” / “Now →” (or similar) 2–4 lines. Very readable. No fluff.', anglePrompts: ['fees', 'ux', 'dev velocity', 'onchain social'], weight: 0.9, maxTokens: 150, maxChars: 360 },
-  { id: 'based-notes', label: 'Based notes (rare)', formatGuide: 'Use 2–4 lines like “Jesse🟦: …” “Aneri🟦: …”. Keep it short. No long paragraphs.', anglePrompts: ['two quick observations', 'two lessons', 'two small wins'], weight: 0.25, maxTokens: 160, maxChars: 420 },
-  { id: 'question-hook', label: 'Question hook', formatGuide: 'Start with 1 question. Then 2–4 lines. End with a simple call for replies.', anglePrompts: ['favorite Base app category', 'builder tip request', 'what are you watching'], weight: 0.75, maxTokens: 160, maxChars: 420 },
+  {
+    id: 'one-liner',
+    label: 'Dry humor one-liner',
+    formatGuide: '1–2 lines. No bullets. No intro paragraph. Punchline is the last line.',
+    anglePrompts: ['small irony', 'deadpan observation', 'subtle flex, but humble'],
+    weight: 1.0,
+    maxTokens: 90,
+    maxChars: 220,
+  },
+  {
+    id: 'micro-story',
+    label: 'Tiny story',
+    formatGuide: '3–5 short lines. Story beats. Line breaks matter. End with a calm takeaway.',
+    anglePrompts: ['moment from today', 'builder frustration -> aha', 'small win onchain'],
+    weight: 1.0,
+    maxTokens: 150,
+    maxChars: 360,
+  },
+  {
+    id: 'checklist',
+    label: 'Checklist',
+    formatGuide: 'Use 3–5 lines like "-" or "- [ ]". No long paragraphs.',
+    anglePrompts: ['shipping checklist', 'onboarding checklist', 'smart habits'],
+    weight: 0.85,
+    maxTokens: 170,
+    maxChars: 420,
+  },
+  {
+    id: 'contrast',
+    label: 'Then vs now',
+    formatGuide: 'Use “Then →” / “Now →” (or similar) 2–4 lines. Very readable. No fluff.',
+    anglePrompts: ['fees', 'ux', 'dev velocity', 'onchain social'],
+    weight: 0.9,
+    maxTokens: 150,
+    maxChars: 360,
+  },
+  {
+    id: 'based-notes',
+    label: 'Based notes (rare)',
+    formatGuide: 'Use 2–4 lines like “Jesse🟦: …” “Aneri🟦: …”. Keep it short. No long paragraphs.',
+    anglePrompts: ['two quick observations', 'two lessons', 'two small wins'],
+    weight: 0.25,
+    maxTokens: 160,
+    maxChars: 420,
+  },
+  {
+    id: 'question-hook',
+    label: 'Question hook',
+    formatGuide: 'Start with 1 question. Then 2–4 lines. End with a simple call for replies.',
+    anglePrompts: ['favorite Base app category', 'builder tip request', 'what are you watching'],
+    weight: 0.75,
+    maxTokens: 160,
+    maxChars: 420,
+  },
 ]
 
-const SL0P_PHRASES = ['unlock', 'game changer', 'revolutionize', 'next level', 'the future is here', 'join us', "don't sleep on", 'wagmi']
+const SL0P_PHRASES = [
+  'unlock',
+  'game changer',
+  'revolutionize',
+  'next level',
+  'the future is here',
+  'join us',
+  "don't sleep on",
+  'wagmi',
+]
 
 const TOPIC_TAGS: Array<{ tag: string; keywords: string[] }> = [
   { tag: 'onchain-social', keywords: ['farcaster', 'warpcast', 'cast', 'frames', 'mini app', 'miniapp', 'social'] },
@@ -85,107 +163,37 @@ const TOPIC_TAGS: Array<{ tag: string; keywords: string[] }> = [
   { tag: 'onboarding', keywords: ['onboard', 'new', 'beginner', 'first', 'wallet', 'bridge', 'learn'] },
 ]
 
-const BANNED_OPENERS = ['gm', 'hot take', 'unpopular opinion', "here's the thing", "let's talk about", 'thread']
-
-// Apify cache — LONG TTL + pre-warm
-const APIFY_CACHE_TTL_MS = 1000 * 60 * 15
+// Apify cache — keep for 10 minutes now (was 3). Dataset doesn't change often.
+const APIFY_CACHE_TTL_MS = 1000 * 60 * 10
 let apifyCache: { ts: number; items: any[] } | null = null
-let apifyPrewarmPromise: Promise<any[]> | null = null
 
-async function fetchApifyPostsInner(limit: number): Promise<any[]> {
-  const datasetId = process.env.APIFY_DATASET_ID
-  const token = process.env.APIFY_TOKEN
-  if (!datasetId || !token) return []
+const BANNED_OPENERS = [
+  'gm',
+  'hot take',
+  'unpopular opinion',
+  "here's the thing",
+  "let's talk about",
+  'thread',
+]
 
-  const controller = new AbortController()
-  const t = setTimeout(() => controller.abort(), 1800)
-  try {
-    const url = `https://api.apify.com/v2/datasets/${datasetId}/items?clean=true&limit=${encodeURIComponent(String(Math.max(limit, 40)))}&token=${encodeURIComponent(token)}`
-    const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal })
-    if (!r.ok) throw new Error(`Apify error: ${r.status}`)
-    const items = await r.json()
-    return Array.isArray(items) ? items : []
-  } finally {
-    clearTimeout(t)
+function twitterify(text: string) {
+  let out = String(text || '').trim()
+  if (!out) return out
+
+  if (out.includes('\n')) {
+    out = out.replace(/\n{3,}/g, '\n\n')
+    return out.trim()
   }
-}
 
-async function fetchApifyPosts(limit: number): Promise<any[]> {
-  const now = Date.now()
-  if (apifyCache && now - apifyCache.ts < APIFY_CACHE_TTL_MS && apifyCache.items.length) {
-    return apifyCache.items.slice(0, limit)
+  const parts = out.match(/[^.!?]+[.!?]+(?:\s+|$)|[^.!?]+$/g) || [out]
+  const sentences = parts.map((s) => s.trim()).filter(Boolean)
+  if (sentences.length <= 2) return out
+
+  const blocks: string[] = []
+  for (let i = 0; i < sentences.length; i += 2) {
+    blocks.push(sentences.slice(i, i + 2).join(' ').trim())
   }
-  if (apifyPrewarmPromise) {
-    try {
-      await apifyPrewarmPromise
-      if (apifyCache && apifyCache.items.length) return apifyCache.items.slice(0, limit)
-    } catch { /* ignore */ }
-  }
-  try {
-    const arr = await fetchApifyPostsInner(limit)
-    apifyCache = { ts: now, items: arr }
-    return arr.slice(0, limit)
-  } catch {
-    if (apifyCache?.items?.length) return apifyCache.items.slice(0, limit)
-    return []
-  }
-}
-
-// Pre-warm at module load
-try {
-  apifyPrewarmPromise = fetchApifyPostsInner(60).then((arr) => {
-    apifyCache = { ts: Date.now(), items: arr }
-    return arr
-  }).catch(() => [])
-} catch { /* ignore */ }
-
-function weightedPick<T extends { weight: number }>(items: T[], penalize: Set<string>, idKey: (x: T) => string): T {
-  const weights = items.map((s) => (penalize.has(idKey(s)) ? s.weight * 0.2 : s.weight))
-  const total = weights.reduce((a, b) => a + b, 0) || 1
-  let roll = Math.random() * total
-  for (let i = 0; i < items.length; i++) {
-    roll -= weights[i]
-    if (roll <= 0) return items[i]
-  }
-  return items[0]
-}
-
-function pickStyle(recentIds: string[]): StyleDeck {
-  return weightedPick(STYLE_DECK, new Set(recentIds), (s) => s.id)
-}
-
-function pickTopicTag(posts: Array<{ text: string }>, recentTags: string[]): string {
-  const corpus = posts.map((p) => p.text.toLowerCase()).join(' ')
-  const scores = TOPIC_TAGS.map(({ tag, keywords }) => {
-    let score = 0
-    for (const kw of keywords) if (corpus.includes(kw)) score += 1
-    if (recentTags.includes(tag)) score *= 0.3
-    return { tag, score }
-  })
-  scores.sort((a, b) => b.score - a.score)
-  const topN = scores.slice(0, 3).filter((s) => s.score > 0)
-  if (topN.length === 0) return 'builders'
-  return topN[Math.floor(Math.random() * topN.length)].tag
-}
-
-function pickSourcePosts(posts: Array<{ author: string; text: string }>, topicTag: string, limit: number) {
-  const tagDef = TOPIC_TAGS.find((t) => t.tag === topicTag)
-  if (!tagDef) return posts.slice(0, limit)
-  const scored = posts.map((p) => {
-    const lower = p.text.toLowerCase()
-    let score = 0
-    for (const kw of tagDef.keywords) if (lower.includes(kw)) score += 1
-    return { p, score }
-  })
-  scored.sort((a, b) => b.score - a.score)
-  const picked = scored.slice(0, Math.min(limit, scored.length)).map((s) => s.p)
-  if (picked.length < limit) {
-    for (const p of posts) {
-      if (picked.length >= limit) break
-      if (!picked.includes(p)) picked.push(p)
-    }
-  }
-  return picked
+  return blocks.join('\n\n').trim()
 }
 
 function clampChars(s: string, max: number) {
@@ -200,62 +208,122 @@ function clampChars(s: string, max: number) {
 function postProcessOutput(raw: string) {
   let out = String(raw || '').trim()
   if (!out) return out
+
+  // Strip outer quotes
   out = out.replace(/^"(.*)"$/s, '$1').replace(/^'(.*)'$/s, '$1').trim()
-  out = out.replace(/—/g, '...').replace(/–/g, '...').replace(/\u2026/g, '...')
+
+  // Replace long dashes with "..."
+  out = out.replace(/—/g, '...').replace(/–/g, '...')
+
+  // Trim repeated whitespace
+  out = twitterify(out)
   out = out.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
   return out
 }
 
-function ensureBaseMention(text: string): string {
-  if (/\bbase\b/i.test(text)) return text
-  const suffixes = [
-    '\n\nFeels good on Base.',
-    '\n\nThis is why Base clicks for me.',
-    '\n\nBase just makes this easy.',
-    '\n\nAll on Base 💙',
-  ]
-  return text.trimEnd() + suffixes[Math.floor(Math.random() * suffixes.length)]
+async function fetchApifyPosts(limit: number) {
+  const now = Date.now()
+  if (apifyCache && now - apifyCache.ts < APIFY_CACHE_TTL_MS && apifyCache.items.length) {
+    return apifyCache.items.slice(0, limit)
+  }
+
+  const datasetId = process.env.APIFY_DATASET_ID
+  const token = process.env.APIFY_TOKEN
+  if (!datasetId || !token) {
+    return []
+  }
+
+  const controller = new AbortController()
+  const t = setTimeout(() => controller.abort(), 2000)
+  try {
+    const url = `https://api.apify.com/v2/datasets/${datasetId}/items?clean=true&limit=${encodeURIComponent(String(Math.max(limit, 40)))}&token=${encodeURIComponent(token)}`
+    const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal })
+    if (!r.ok) throw new Error(`Apify error: ${r.status}`)
+    const items = await r.json()
+    const arr = Array.isArray(items) ? items : []
+    apifyCache = { ts: now, items: arr }
+    return arr.slice(0, limit)
+  } catch (e) {
+    if (apifyCache?.items?.length) return apifyCache.items.slice(0, limit)
+    return []
+  } finally {
+    clearTimeout(t)
+  }
 }
 
-function fastLocalGenerate(args: { posts: Array<{ author: string; text: string }>; style: StyleDeck }): string {
-  const corpus = args.posts.map((p) => p.text).join(' ').toLowerCase()
-  const has = (words: string[]) => words.some((w) => corpus.includes(w))
-  let cue = 'shipping without overthinking every step'
-  if (has(['fee', 'fees', 'gas', 'cheap'])) cue = 'low fees'
-  else if (has(['fast', 'faster', 'latency', 'finality'])) cue = 'fast feedback loops'
-  else if (has(['ship', 'builder', 'build'])) cue = 'shipping small things quickly'
-  else if (has(['farcaster', 'cast', 'social'])) cue = 'onchain posts that feel native'
-  else if (has(['wallet', 'onboard'])) cue = 'getting people onchain without drama'
-  else if (has(['defi', 'swap', 'liquidity'])) cue = 'moving capital without extra friction'
-
-  const lines = [
-    `What actually works on Base: ${cue}.`,
-    'The small experiments finally feel worth doing.',
-    'Nothing fancy, just less friction 💙',
-  ]
-  return clampChars(lines.join('\n'), args.style.maxChars)
-}
-
-// ============================================================
-// OpenAI streaming call — returns the raw fetch Response
-// ============================================================
-async function openaiStreamResponse(args: {
+function fastLocalGenerate(args: {
   posts: Array<{ author: string; text: string }>
   style: StyleDeck
   topicTag: string
   recentTexts: string[]
+}) {
+  const pool = args.posts.map((p) => String(p.text || '').trim()).filter(Boolean)
+  const corpus = pool.join(' \n ').toLowerCase()
+
+  const has = (words: string[]) => words.some((w) => corpus.includes(w))
+  const cue = (() => {
+    if (has(['fee', 'fees', 'gas', 'cheap'])) return 'low fees'
+    if (has(['fast', 'faster', 'latency', 'finality'])) return 'fast feedback loops'
+    if (has(['ship', 'shipping', 'builder', 'build', 'dev'])) return 'shipping small things quickly'
+    if (has(['farcaster', 'cast', 'social', 'mini app', 'miniapp'])) return 'onchain posts that feel native'
+    if (has(['wallet', 'onboard', 'bridge', 'new user'])) return 'getting people onchain without drama'
+    if (has(['defi', 'swap', 'liquidity', 'stablecoin'])) return 'moving capital without extra friction'
+    return 'shipping without overthinking every step'
+  })()
+
+  const detail = (() => {
+    if (has(['builder', 'dev', 'deploy', 'sdk'])) return 'You can test an idea, tweak it, and ship again before the mood disappears.'
+    if (has(['social', 'farcaster', 'cast'])) return 'The post can be the product update instead of a separate chore.'
+    if (has(['wallet', 'onboard', 'new user'])) return 'The path from curiosity to first action feels shorter.'
+    if (has(['fees', 'gas'])) return 'The small experiments finally feel worth doing.'
+    return 'The small experiments finally feel worth doing.'
+  })()
+
+  const lines = [
+    `What actually works on Base: ${cue}.`,
+    detail,
+    'Nothing fancy, just less friction 💙',
+  ]
+  return postProcessOutput(clampChars(lines.join('\n'), args.style.maxChars))
+}
+
+async function openaiChatWithTimeout(body: any, apiKey: string, timeoutMs: number) {
+  const controller = new AbortController()
+  const t = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(t)
+  }
+}
+
+async function openaiGenerate(args: {
+  userId: string
   extraPrompt: string
-}): Promise<Response | null> {
+  posts: Array<{ author: string; text: string }>
+  style: StyleDeck
+  topicTag: string
+  recentTexts: string[]
+}) {
   const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) return null
+  if (!apiKey) return fastLocalGenerate(args)
 
   const model = process.env.OPENAI_MODEL || 'gpt-4o-mini'
+
+  const seed = crypto.randomUUID()
   const style = args.style
   const angle = style.anglePrompts[Math.floor(Math.random() * style.anglePrompts.length)]
-  const seed = crypto.randomUUID()
 
   const sourceBlock = args.posts
-    .slice(0, 12)
+    .slice(0, 10) // reduced from 12 to 10 (smaller prompt = faster)
     .map((p, i) => `${i + 1}. @${p.author}: ${p.text}`)
     .join('\n')
 
@@ -263,7 +331,7 @@ async function openaiStreamResponse(args: {
     'You are writing a single Farcaster/Twitter-style post for the Base ecosystem.',
     'It must feel human-written: specific, a little clever, and NOT like an AI template.',
     'Hard rules:',
-    '- The post MUST mention "Base" naturally once (not more than twice).',
+    '- The post MUST mention "Base" naturally at least once (but not more than twice).',
     '- Do NOT copy any source post. Do NOT paraphrase too closely.',
     '- Do NOT use long dashes (—/–). Use "..." for pauses.',
     '- Do NOT use generic hype/marketing lines. Avoid obvious AI phrasing.',
@@ -285,20 +353,15 @@ async function openaiStreamResponse(args: {
     `Banned opening phrases: ${BANNED_OPENERS.join(', ')}`,
     '',
     'Recent posts for this user (avoid repeating):',
-    args.recentTexts.length ? args.recentTexts.map((t, i) => `${i + 1}. ${t}`).join('\n') : '(none)',
+    args.recentTexts.length ? args.recentTexts.slice(0, 3).map((t, i) => `${i + 1}. ${t}`).join('\n') : '(none)',
     '',
-    'Source posts from the Apify dataset (inspiration only; do NOT copy):',
+    'Source posts (inspiration only, do NOT copy):',
     sourceBlock || '(none)',
     '',
-    'Extra user context (optional):',
-    args.extraPrompt?.trim() ? args.extraPrompt.trim() : '(none)',
+    args.extraPrompt?.trim() ? `Extra context: ${args.extraPrompt.trim()}` : '',
     '',
-    'Write ONE post now. Requirements:',
-    '- It should feel like a real person wrote it.',
-    '- It must be clearly about Base by the end, but NOT forced.',
-    '- Use the chosen format. If you use bullets/quotes, keep each line short.',
-    '- Avoid long paragraphs.',
-  ].join('\n')
+    'Write ONE post now. It must feel like a real person wrote it, use the chosen format, and mention Base naturally.',
+  ].filter(Boolean).join('\n')
 
   const body = {
     model,
@@ -306,37 +369,122 @@ async function openaiStreamResponse(args: {
       { role: 'system', content: system },
       { role: 'user', content: user },
     ],
-    temperature: 1.15,
-    presence_penalty: 0.7,
-    frequency_penalty: 0.35,
+    temperature: 1.1,
+    presence_penalty: 0.6,
+    frequency_penalty: 0.3,
     max_tokens: style.maxTokens,
-    stream: true,
   }
 
-  const controller = new AbortController()
-  const t = setTimeout(() => controller.abort(), 15000)
-
+  let resp: Response
   try {
-    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    })
-
-    if (!resp.ok || !resp.body) {
-      clearTimeout(t)
-      return null
-    }
-    // Don't clear timeout — it'll abort if the stream itself hangs
-    return resp
+    // Reduced timeout: gpt-4o-mini usually responds in 2-5 seconds.
+    // If it takes longer than 12s something is wrong — fall back to local.
+    resp = await openaiChatWithTimeout(body, apiKey, 12000)
   } catch {
-    clearTimeout(t)
-    return null
+    return fastLocalGenerate(args)
   }
+
+  if (!resp.ok) {
+    return fastLocalGenerate(args)
+  }
+
+  const jsonResp: any = await resp.json()
+  const out = String(jsonResp?.choices?.[0]?.message?.content || '').trim()
+  if (!out) return fastLocalGenerate(args)
+
+  const cleaned = clampChars(postProcessOutput(out), style.maxChars)
+
+  const lower = cleaned.toLowerCase().trim()
+  for (const opener of BANNED_OPENERS) {
+    if (lower.startsWith(opener)) {
+      return postProcessOutput(`Noticed something: ${cleaned}`)
+    }
+  }
+
+  return cleaned
+}
+
+/**
+ * LOCAL fallback to ensure "Base" appears. No OpenAI call — instant.
+ * Adds a natural trailing line referencing Base if the model forgot.
+ */
+function ensureBaseMention(text: string): string {
+  if (/\bbase\b/i.test(text)) return text
+  const trimmed = text.trimEnd()
+  // Add a subtle, varied suffix
+  const suffixes = [
+    '\n\nFeels good on Base.',
+    '\n\nThis is why Base clicks for me.',
+    '\n\n— all on Base.',
+    '\n\nBase just makes this easy.',
+  ]
+  const pick = suffixes[Math.floor(Math.random() * suffixes.length)]
+  return trimmed + pick
+}
+
+function weightedPick<T>(items: T[], weights: number[]): T {
+  const total = weights.reduce((a, b) => a + b, 0) || 1
+  let roll = Math.random() * total
+  for (let i = 0; i < items.length; i++) {
+    roll -= weights[i]
+    if (roll <= 0) return items[i]
+  }
+  return items[0]
+}
+
+function pickStyle(recentIds: string[]): StyleDeck {
+  // De-prioritize styles used recently
+  const weights = STYLE_DECK.map((s) => {
+    const usedRecently = recentIds.includes(s.id)
+    return usedRecently ? s.weight * 0.25 : s.weight
+  })
+  return weightedPick(STYLE_DECK, weights)
+}
+
+function pickTopicTag(posts: Array<{ text: string }>, recentTags: string[]): string {
+  const corpus = posts.map((p) => p.text.toLowerCase()).join(' ')
+  const scores = TOPIC_TAGS.map(({ tag, keywords }) => {
+    let score = 0
+    for (const kw of keywords) {
+      if (corpus.includes(kw)) score += 1
+    }
+    if (recentTags.includes(tag)) score *= 0.4
+    return { tag, score }
+  })
+  scores.sort((a, b) => b.score - a.score)
+  // Pick from top 3 with some randomness
+  const topN = scores.slice(0, 3).filter((s) => s.score > 0)
+  if (topN.length === 0) return 'builders'
+  return topN[Math.floor(Math.random() * topN.length)].tag
+}
+
+function pickSourcePosts(
+  posts: Array<{ author: string; text: string }>,
+  topicTag: string,
+  limit: number
+) {
+  const tagDef = TOPIC_TAGS.find((t) => t.tag === topicTag)
+  if (!tagDef) return posts.slice(0, limit)
+
+  const scored = posts.map((p) => {
+    const lower = p.text.toLowerCase()
+    let score = 0
+    for (const kw of tagDef.keywords) {
+      if (lower.includes(kw)) score += 1
+    }
+    return { p, score }
+  })
+  scored.sort((a, b) => b.score - a.score)
+
+  const picked = scored.slice(0, Math.min(limit, scored.length)).map((s) => s.p)
+  // If not enough matched, pad with other posts
+  if (picked.length < limit) {
+    for (const p of posts) {
+      if (picked.length >= limit) break
+      if (!picked.includes(p)) picked.push(p)
+    }
+  }
+  return picked
 }
 
 export default async function handler(req: any, res: any) {
@@ -344,148 +492,94 @@ export default async function handler(req: any, res: any) {
   if (handleOptions(req, res)) return
   if (!requirePost(req, res)) return
 
-  let body: any = {}
   try {
-    body = await readJson(req)
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON body' })
-  }
+    let body: any = {}
+    try {
+      body = await readJson(req)
+    } catch {
+      return json(res, 400, { error: 'Invalid JSON body' })
+    }
 
-  const userId = toUserId(body)
-  if (!userId) return json(res, 400, { error: 'Missing user identity (fid or address)' })
+    const userId = toUserId(body)
+    if (!userId) return json(res, 400, { error: 'Missing user identity (fid or address)' })
 
-  const extraPrompt = String(body?.prompt || '').slice(0, 600)
-  const limit = Math.max(1, Math.min(200, Number(body?.limit || 50)))
+    const extraPrompt = String(body?.prompt || '').slice(0, 600)
+    const limit = Math.max(1, Math.min(200, Number(body?.limit || 50)))
 
-  const user = await getOrCreateUser(userId)
-  if (user.credits < 3) {
-    return json(res, 402, { error: 'Not enough credits (need 3)', credits: user.credits })
-  }
+    const user = await getOrCreateUser(userId)
+    if (user.credits < 3) {
+      return json(res, 402, { error: 'Not enough credits (need 3)', credits: user.credits })
+    }
 
-  // Parallel: Apify + user recent
-  const [apifyItems, recent] = await Promise.all([
-    fetchApifyPosts(limit),
-    getRecent(userId, 'post', 12).catch(() => []),
-  ])
+    let charged = false
+    try {
+      // ⚡ SPEED FIX: run Apify fetch and user recent fetch in parallel instead of sequential.
+      const [apifyItems, recent] = await Promise.all([
+        fetchApifyPosts(limit),
+        getRecent(userId, 'post', 12),
+      ])
 
-  const posts = normalizePosts(apifyItems, 25)
-  const recentStyleIds = recent.map((r: any) => String(r?.styleId || '')).filter(Boolean)
-  const recentTags = recent.map((r: any) => String(r?.topicTag || '')).filter(Boolean)
-  const recentTexts = recent
-    .map((r: any) => String(r?.text || '').trim())
-    .filter(Boolean)
-    .slice(0, 4)
+      const posts = normalizePosts(apifyItems, 25)
 
-  const usedStyle = pickStyle(recentStyleIds.slice(0, 3))
-  const usedTopicTag = pickTopicTag(posts, recentTags.slice(0, 4))
+      const recentStyleIds = recent.map((r) => String(r?.styleId || '')).filter(Boolean)
+      const recentTags = recent.map((r) => String(r?.topicTag || '')).filter(Boolean)
+      const recentTexts = recent
+        .map((r) => String(r?.text || '').trim())
+        .filter(Boolean)
+        .slice(0, 3) // reduced from 4 to 3 (smaller prompt)
 
-  const chosenSources = pickSourcePosts(
-    posts.map((p: any) => ({ author: p.author, text: p.text })),
-    usedTopicTag,
-    12
-  )
+      const usedStyle = pickStyle(recentStyleIds.slice(0, 3))
+      const usedTopicTag = pickTopicTag(posts, recentTags.slice(0, 4))
 
-  // Charge credits upfront
-  const after = await adjustCredits(userId, -3)
+      const chosenSources = pickSourcePosts(
+        posts.map((p) => ({ author: p.author, text: p.text })),
+        usedTopicTag,
+        10 // reduced from 12
+      )
 
-  // Fire background metrics
-  Promise.all([
-    incrementMetric(userId, 'postCount', 1, 2).catch(() => {}),
-    logCreditSpend({ userId, creditsSpent: 3, postDelta: 1 }).catch(() => {}),
-  ]).catch(() => {})
+      // ⚡ SPEED FIX: only 1 OpenAI call. No retry, no second "add Base" rewrite.
+      // If "Base" is missing, we append it locally (instant, no extra call).
+      let text = await openaiGenerate({
+        userId,
+        extraPrompt,
+        posts: chosenSources,
+        style: usedStyle,
+        topicTag: usedTopicTag,
+        recentTexts,
+      })
 
-  // --- STREAMING RESPONSE ---
-  // Set headers for streaming (Node.js http response)
-  res.statusCode = 200
-  res.setHeader('Content-Type', 'text/plain; charset=utf-8')
-  res.setHeader('Cache-Control', 'no-store, no-transform')
-  res.setHeader('X-Accel-Buffering', 'no')
+      text = ensureBaseMention(text)
 
-  // Send metadata first
-  const metaLine = JSON.stringify({
-    type: 'meta',
-    credits: after.credits,
-    format: usedStyle.id,
-    topic: usedTopicTag,
-    sourceCount: posts.length,
-  }) + '\n'
-  res.write(metaLine)
-
-  let fullText = ''
-
-  try {
-    const openaiResp = await openaiStreamResponse({
-      posts: chosenSources,
-      style: usedStyle,
-      topicTag: usedTopicTag,
-      recentTexts,
-      extraPrompt,
-    })
-
-    if (!openaiResp || !openaiResp.body) {
-      // Fallback: local generation
-      const localText = ensureBaseMention(fastLocalGenerate({ posts: chosenSources, style: usedStyle }))
-      fullText = localText
-      res.write(JSON.stringify({ type: 'chunk', text: localText }) + '\n')
-    } else {
-      // Stream OpenAI SSE → forward each delta as a JSON line to client
-      const reader = openaiResp.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split('\n')
-          buffer = lines.pop() || ''
-
-          for (const line of lines) {
-            const trimmed = line.trim()
-            if (!trimmed || !trimmed.startsWith('data:')) continue
-            const data = trimmed.slice(5).trim()
-            if (data === '[DONE]') continue
-            try {
-              const parsed = JSON.parse(data)
-              const delta = parsed?.choices?.[0]?.delta?.content
-              if (typeof delta === 'string' && delta.length > 0) {
-                fullText += delta
-                res.write(JSON.stringify({ type: 'chunk', text: delta }) + '\n')
-              }
-            } catch {
-              // ignore malformed line
-            }
-          }
-        }
-      } catch {
-        // stream error
-      } finally {
-        try { reader.releaseLock() } catch { /* ignore */ }
+      const latest = await getOrCreateUser(userId)
+      if (latest.credits < 3) {
+        return json(res, 402, { error: 'Not enough credits (need 3)', credits: latest.credits })
       }
+
+      const after = await adjustCredits(userId, -3)
+      charged = true
+
+      // Background tasks — don't block the response
+      Promise.all([
+        pushRecent(userId, 'post', { ts: Date.now(), styleId: usedStyle.id, topicTag: usedTopicTag, text }, 12).catch(() => {}),
+        incrementMetric(userId, 'postCount', 1, 2).catch(() => {}),
+        logCreditSpend({ userId, creditsSpent: 3, postDelta: 1 }).catch(() => {}),
+      ]).catch(() => {})
+
+      return json(res, 200, {
+        ok: true,
+        text,
+        credits: after.credits,
+        sourceCount: posts.length,
+        format: usedStyle.id,
+        topic: usedTopicTag,
+      })
+    } catch (e: any) {
+      if (charged) {
+        try { await adjustCredits(userId, +3) } catch { /* ignore */ }
+      }
+      return json(res, 500, { error: e?.message || 'Generation failed' })
     }
-  } catch {
-    // Any unexpected error → fallback
-    if (!fullText) {
-      fullText = ensureBaseMention(fastLocalGenerate({ posts: chosenSources, style: usedStyle }))
-      res.write(JSON.stringify({ type: 'chunk', text: fullText }) + '\n')
-    }
+  } catch (e: any) {
+    return json(res, 500, { error: e?.message || 'Server error' })
   }
-
-  // Post-process the full accumulated text
-  let finalText = postProcessOutput(fullText || fastLocalGenerate({ posts: chosenSources, style: usedStyle }))
-  finalText = clampChars(finalText, usedStyle.maxChars)
-  finalText = ensureBaseMention(finalText)
-
-  // If post-processing changed the text, send the cleaned final
-  if (finalText !== fullText) {
-    res.write(JSON.stringify({ type: 'final', text: finalText }) + '\n')
-  } else {
-    res.write(JSON.stringify({ type: 'done', text: finalText }) + '\n')
-  }
-
-  res.end()
-
-  // Fire-and-forget: save recent (after response already sent)
-  pushRecent(userId, 'post', { ts: Date.now(), styleId: usedStyle.id, topicTag: usedTopicTag, text: finalText }, 12).catch(() => {})
 }
