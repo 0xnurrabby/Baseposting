@@ -773,7 +773,7 @@ export default function App() {
     }
   }, [])
 
-  // POST DIRECTLY — Twitter / X (not Farcaster)
+  // POST DIRECTLY → Twitter / X (not Farcaster)
   const onPostDirectly = useCallback(async () => {
     const current = resultRef.current
     if (!current) return
@@ -837,6 +837,46 @@ export default function App() {
     }
   }, [shareEligible])
 
+  async function waitForCallsTxHash(
+    provider: any,
+    callsId: string,
+    opts: { timeoutMs?: number; pollMs?: number } = {},
+  ) {
+    const timeoutMs = opts.timeoutMs ?? 15000
+    const pollMs = opts.pollMs ?? 800
+    const started = Date.now()
+
+    while (Date.now() - started < timeoutMs) {
+      let status: any
+      try {
+        status = await provider.request({ method: 'wallet_getCallsStatus', params: [callsId] })
+      } catch (e: any) {
+        if (e?.code === 4100) {
+          throw new Error('Your wallet does not support wallet_getCallsStatus, so we cannot verify this batch transaction.')
+        }
+        throw e
+      }
+
+      const code = Number(status?.status)
+      if (code === 100) {
+        await new Promise((r) => setTimeout(r, pollMs))
+        continue
+      }
+
+      if (code === 200) {
+        const receipts = status?.receipts
+        const first = Array.isArray(receipts) ? receipts[0] : receipts
+        const txHash = first?.transactionHash
+        if (!txHash) throw new Error('Batch confirmed, but no transactionHash was returned by the wallet.')
+        return txHash as string
+      }
+
+      throw new Error(`Batch failed (status ${isNaN(code) ? String(status?.status) : code}).`)
+    }
+
+    throw new Error('Timed out waiting for transaction confirmation.')
+  }
+
   const onGetCredit = useCallback(async () => {
     if (submittingCredit || verifyingCredit) return
 
@@ -873,4 +913,565 @@ export default function App() {
 
       const data = encodeFunctionData({
         abi: LOG_ACTION_ABI,
-        functionName:
+        functionName: 'logAction',
+        args: [action, payload],
+      })
+
+      // Universal tx submission:
+      //   1) Try wallet_sendCalls (Base smart wallet / Coinbase)
+      //   2) Fallback to eth_sendTransaction (Trust / Bitget / MetaMask / Rabby / OKX)
+      let txHash = ''
+      let usedFallback = false
+
+      const sendLegacyTx = async () => {
+        const balHex = (await provider.request({ method: 'eth_getBalance', params: [addr, 'latest'] })) as string
+        if (BigInt(balHex) === 0n) {
+          throw new Error(
+            'Your wallet has 0 Base ETH to pay gas. Please add a small amount of ETH on Base (use bridge.base.org) and retry.'
+          )
+        }
+        const tx: any = {
+          from: addr,
+          to: CONTRACT,
+          data,
+          // NOTE: `value` is intentionally omitted. Trust wallet returns
+          // "invalid request" when `value: '0x0'` is present.
+        }
+        return (await provider.request({ method: 'eth_sendTransaction', params: [tx] })) as string
+      }
+
+      try {
+        const callsPayload: any = {
+          version: '2.0.0',
+          from: addr,
+          chainId: '0x2105',
+          atomicRequired: false,
+          calls: [{ to: CONTRACT, data }],
+        }
+        const sendRes: any = await provider.request({ method: 'wallet_sendCalls', params: [callsPayload] })
+
+        const confirmationId =
+          typeof sendRes === 'string'
+            ? sendRes
+            : sendRes?.callsId || sendRes?.batchId || sendRes?.id || sendRes?.result || sendRes?.hash
+
+        if (!confirmationId || typeof confirmationId !== 'string') {
+          throw new Error('wallet_sendCalls returned no id')
+        }
+
+        toast.message('Transaction submitted. Verifying on-chain…')
+        txHash = /^0x[a-fA-F0-9]{64}$/.test(confirmationId)
+          ? confirmationId
+          : await waitForCallsTxHash(provider, confirmationId, { timeoutMs: 20000, pollMs: 1200 })
+      } catch (e: any) {
+        if (isUserRejection(e)) throw e
+        if (isMethodNotSupported(e) || isInvalidParamsOrCapability(e)) {
+          usedFallback = true
+        } else {
+          // Unknown error — still try the legacy path as a safety net
+          usedFallback = true
+        }
+      }
+
+      if (!txHash && usedFallback) {
+        txHash = await sendLegacyTx()
+        toast.message('Transaction submitted. Verifying on-chain…')
+      }
+
+      if (!txHash) {
+        throw new Error('Could not submit transaction. Please try again.')
+      }
+
+      savePendingTx(txHash, addr)
+      setSubmittingCredit(false)
+      await verifyCreditTxInBackground({ address: addr }, txHash)
+    } catch (e: any) {
+      if (isUserRejection(e)) {
+        toast.message('Transaction cancelled')
+      } else {
+        toast.error(e?.message || 'Transaction failed')
+      }
+      setSubmittingCredit(false)
+      setVerifyingCredit(false)
+    }
+  }, [submittingCredit, verifyingCredit, ensureWalletIdentity])
+
+  const onSendTip = useCallback(async () => {
+    if (!isAddress(RECIPIENT)) {
+      toast.error('Tip recipient is invalid')
+      return
+    }
+
+    const addr = await ensureWalletIdentity()
+    if (!addr) return
+
+    let amount: bigint
+    try {
+      const v = String(tipUsd || '').trim()
+      if (!v) throw new Error('Enter an amount')
+      amount = parseUnits(v, USDC_DECIMALS)
+      if (amount <= 0n) throw new Error('Amount must be > 0')
+    } catch (e: any) {
+      toast.error(e?.message || 'Invalid amount')
+      return
+    }
+
+    setTipStage('preparing')
+    try {
+      await hapticImpact(capabilitiesRef.current, 'medium')
+      await new Promise((r) => setTimeout(r, 1200))
+
+      const provider: any = await getEthereumProvider(selectedWalletIdRef.current, {
+        isInMiniApp: isInMiniAppRef.current,
+        client: miniClientRef.current,
+      })
+
+      const chainId = (await provider.request({ method: 'eth_chainId' })) as string
+      if (chainId !== '0x2105') {
+        try {
+          await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x2105' }] })
+        } catch {
+          throw new Error('Please switch to Base Mainnet (0x2105) to send a tip.')
+        }
+      }
+
+      const recipient = getAddress(RECIPIENT)
+      const data = encodeErc20Transfer(recipient, amount)
+
+      setTipStage('confirm')
+
+      // Try wallet_sendCalls, fallback to eth_sendTransaction
+      let submitted = false
+      try {
+        await provider.request({
+          method: 'wallet_sendCalls',
+          params: [{
+            version: '2.0.0',
+            from: addr,
+            chainId: '0x2105',
+            atomicRequired: false,
+            calls: [{ to: USDC_CONTRACT, data }],
+          }],
+        })
+        submitted = true
+      } catch (e: any) {
+        if (isUserRejection(e)) throw e
+        if (!isMethodNotSupported(e) && !isInvalidParamsOrCapability(e)) {
+          // proceed to fallback anyway
+        }
+      }
+
+      if (!submitted) {
+        const tx = { from: addr, to: USDC_CONTRACT, data }
+        await provider.request({ method: 'eth_sendTransaction', params: [tx] })
+      }
+
+      setTipStage('sending')
+      await new Promise((r) => setTimeout(r, 500))
+      setTipStage('done')
+    } catch (e: any) {
+      if (isUserRejection(e)) {
+        toast.message('Tip cancelled')
+      } else {
+        toast.error(e?.message || 'Tip failed')
+      }
+      setTipStage('idle')
+    }
+  }, [tipUsd, ensureWalletIdentity])
+
+  const closeTip = useCallback(() => {
+    setTipOpen(false)
+    setTipStage('idle')
+  }, [])
+
+  const openLeaderboard = useCallback(() => setView('leaderboard'), [])
+  const goHome = useCallback(() => setView('home'), [])
+  const toggleTheme = useCallback(() => setDark((v) => !v), [])
+  const openTipModal = useCallback(() => setTipOpen(true), [])
+
+  const creditsLabel = credits === null ? '—' : String(credits)
+  const creditBusy = submittingCredit || verifyingCredit
+  const creditLoadingText = submittingCredit ? 'Confirm in wallet' : 'Verifying tx'
+
+  if (!miniLoaded) {
+    return (
+      <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
+        <div className="mx-auto max-w-2xl px-4 py-10">
+          <Card>
+            <CardHeader>
+              <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">BasePosting</div>
+            </CardHeader>
+            <CardContent>
+              <Skeleton className="h-6 w-48" />
+              <Skeleton className="mt-3 h-24 w-full" />
+              <Skeleton className="mt-4 h-10 w-40" />
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
+      <div className="bg-grid min-h-screen">
+        <div className="mx-auto max-w-2xl px-4 py-10">
+          {view === 'leaderboard' ? (
+            <LeaderboardPage
+              identity={identity}
+              dark={dark}
+              onToggleTheme={toggleTheme}
+              onClose={goHome}
+            />
+          ) : (
+            <>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <div className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">BasePosting</div>
+                    <span className="inline-flex items-center rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs font-semibold text-zinc-700 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-200">
+                      {loadingMe ? '…' : `${creditsLabel} credits`}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400"><span>Stay consistent, Stay based, Post banger💙.</span></div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {identity.address ? (
+                    <div className="hidden sm:flex items-center gap-2 rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs font-semibold text-zinc-700 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-200">
+                      <span className="font-mono">{shortAddress(identity.address)}</span>
+                    </div>
+                  ) : null}
+
+                  <Button variant="ghost" aria-label="Leaderboard" onClick={openLeaderboard}>
+                    <LeaderboardIcon className="h-8 w-8 lb-rainbow" />
+                    <span className="hidden sm:inline">Leaderboard</span>
+                  </Button>
+
+                  <Button variant="ghost" aria-label="Toggle theme" onClick={toggleTheme}>
+                    {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                    <span className="hidden sm:inline">{dark ? 'Light' : 'Dark'}</span>
+                  </Button>
+                </div>
+              </div>
+
+              <Card className="mt-6">
+                <CardHeader>
+                  <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{walletConnected ? 'Generate Post' : 'Connect wallet first.'}</div>
+                  <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">╰┈➤</div>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex flex-col gap-3">
+                    <Button
+                      className="w-full"
+                      variant="primary"
+                      isLoading={false}
+                      disabled={!canGenerate || generating}
+                      onClick={onGenerate}
+                    >
+                      <LoadingLabel
+                        active={generating}
+                        estimateSec={20}
+                        idleText="Generate (-1c)"
+                        icon={<Sparkles className="h-4 w-4" />}
+                      />
+                    </Button>
+
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Button
+                        variant="secondary"
+                        isLoading={walletConnecting}
+                        onClick={onCreateWallet}
+                        disabled={!miniLoaded}
+                        className="w-full sm:w-auto"
+                      >
+                        <Wallet className="h-4 w-4" />
+                        {identity.address ? shortAddress(identity.address) : 'Connect Wallet'}
+                      </Button>
+
+                      <Button
+                        variant="secondary"
+                        isLoading={false}
+                        onClick={onGetCredit}
+                        disabled={!miniLoaded || !walletConnected || creditBusy}
+                        className="w-full sm:w-auto"
+                      >
+                        <LoadingLabel
+                          active={creditBusy}
+                          estimateSec={submittingCredit ? 20 : 45}
+                          idleText="Get Credit"
+                          icon={<Wallet className="h-4 w-4" />}
+                          loadingText={creditLoadingText}
+                        />
+                      </Button>
+
+                      <Button
+                        variant="ghost"
+                        isLoading={sharing}
+                        onClick={onShareForCredits}
+                        disabled={!shareEligible || !walletConnected}
+                        className="w-full sm:w-auto"
+                      >
+                        <Send className="h-4 w-4" />
+                        Share for 6 credit
+                      </Button>
+
+                      <Button
+                        variant="ghost"
+                        onClick={openTipModal}
+                        disabled={!miniLoaded}
+                        className="w-full sm:w-auto"
+                      >
+                        <HandCoins className="h-4 w-4" />
+                        Tip Me
+                      </Button>
+                    </div>
+                  </div>
+
+                  {!shareEligible && todayUtc ? (
+                    <div className="mt-3 text-xs text-zinc-600 dark:text-zinc-400">Share bonus already claimed for UTC {todayUtc}.</div>
+                  ) : null}
+                </CardContent>
+              </Card>
+
+              <Card className="mt-6">
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Basepost</div>
+                      <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                        Share your generated post directly to X.
+                      </div>
+                    </div>
+
+                    <Button
+                      variant="secondary"
+                      isLoading={false}
+                      disabled
+                      className="px-5 py-2.5 text-sm opacity-70"
+                      title="Photo generation is temporarily disabled"
+                    >
+                      <ImageIcon className="h-4 w-4" />
+                      Photo: off
+                    </Button>
+                  </div>
+
+                  <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-2 text-[11px] font-medium text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+                    📸 Photo generation is temporarily disabled (cost saving). It will be back on soon.
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div style={{ minHeight: 120 }}>
+                    {generating ? (
+                      <div className="space-y-3">
+                        <Skeleton className="h-4 w-full" />
+                        <Skeleton className="h-4 w-11/12" />
+                        <Skeleton className="h-4 w-4/5" />
+                      </div>
+                    ) : result ? (
+                      <div className="whitespace-pre-wrap rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
+                        {result}
+                      </div>
+                    ) : (
+                      <div className="text-sm text-zinc-600 dark:text-zinc-400">Hit Generate to see your post here ⌯⌲</div>
+                    )}
+                  </div>
+
+                  <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                    <Button
+                      variant="primary"
+                      isLoading={posting}
+                      disabled={!result}
+                      onClick={onPostDirectly}
+                      className="w-full sm:w-auto"
+                    >
+                      <Send className="h-4 w-4" />
+                      Post to X
+                    </Button>
+
+                    <Button
+                      variant="secondary"
+                      disabled={!result}
+                      onClick={onCopy}
+                      className="w-full sm:w-auto"
+                    >
+                      <Copy className="h-4 w-4" />
+                      Copy
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {tipOpen ? (
+                <div className="fixed inset-0 z-50">
+                  <div
+                    className="absolute inset-0 bg-black/50"
+                    onClick={closeTip}
+                  />
+
+                  <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-2xl rounded-t-3xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Tip with USDC</div>
+                        <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Network: Base Mainnet • Token: USDC</div>
+                      </div>
+                      <button
+                        className="rounded-xl p-2 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                        onClick={closeTip}
+                        aria-label="Close"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    {tipStage === 'done' ? (
+                      <div className="mt-8 flex flex-col items-center text-center">
+                        <div className="flex h-14 w-14 items-center justify-center rounded-full border border-zinc-200 bg-zinc-50 text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white">
+                          <HandCoins className="h-6 w-6" />
+                        </div>
+                        <div className="mt-4 text-base font-semibold text-zinc-900 dark:text-zinc-100">Tip sent 💙</div>
+                        <div className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Thank you. You’re making this mini app better.</div>
+                        <div className="mt-4 text-xs text-zinc-500 dark:text-zinc-500">Closing…</div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="mt-4 grid grid-cols-4 gap-2">
+                          {[100, 250, 500, 1000].map((v) => (
+                            <button
+                              key={v}
+                              onClick={() => setTipUsd(String(v))}
+                              className={`rounded-2xl border px-3 py-2 text-sm font-semibold transition active:scale-[0.98] ${
+                                String(v) === String(tipUsd)
+                                  ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
+                                  : 'border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900'
+                              }`}
+                            >
+                              ${v}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="mt-3">
+                          <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Custom amount (USD)</label>
+                          <input
+                            value={tipUsd}
+                            onChange={(e) => setTipUsd(e.target.value)}
+                            inputMode="decimal"
+                            placeholder="500"
+                            className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none transition focus:border-zinc-400 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-zinc-600"
+                          />
+                        </div>
+
+                        <div className="mt-4">
+                          <Button
+                            variant="primary"
+                            className="w-full"
+                            isLoading={tipStage === 'preparing' || tipStage === 'confirm' || tipStage === 'sending'}
+                            disabled={tipStage !== 'idle'}
+                            onClick={onSendTip}
+                          >
+                            <HandCoins className="h-4 w-4" />
+                            {tipStage === 'idle'
+                              ? 'Send USDC'
+                              : tipStage === 'preparing'
+                                ? 'Preparing tip…'
+                                : tipStage === 'confirm'
+                                  ? 'Confirm in wallet'
+                                  : 'Sending…'}
+                          </Button>
+                          <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+                            Recipient: <span className="font-mono">{shortAddress(RECIPIENT)}</span>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </>
+          )}
+
+          <div className="mt-8 text-center text-xs text-zinc-500 dark:text-zinc-500">
+            © Copyright 2026
+          </div>
+        </div>
+      </div>
+
+      {walletModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-4xl overflow-hidden rounded-[28px] border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="grid md:grid-cols-[360px_minmax(0,1fr)]">
+              <div className="border-b border-zinc-200 p-6 md:border-b-0 md:border-r dark:border-zinc-800">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-2xl font-bold text-zinc-900 dark:text-white">Connect a Wallet</div>
+                    <div className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Click a detected wallet to connect.</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setWalletModalOpen(false)}
+                    className="rounded-full p-2 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-900 dark:hover:text-white"
+                    aria-label="Close wallet modal"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+
+                <div className="mt-6 space-y-2">
+                  {walletOptions.length ? walletOptions.map((option) => {
+                    const active = option.id === selectedWalletId
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => void connectWallet(option)}
+                        className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition ${active ? 'border-zinc-900 bg-zinc-100 dark:border-white dark:bg-zinc-900' : 'border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/70'}`}
+                      >
+                        <div>
+                          <div className="text-base font-semibold text-zinc-900 dark:text-white">{option.name}</div>
+                          <div className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">{option.source === 'miniapp' ? 'Detected from current mini app host' : 'Detected from this browser / device'}</div>
+                        </div>
+                        <div className="rounded-full border border-zinc-200 px-2 py-1 text-[11px] font-semibold text-zinc-600 dark:border-zinc-700 dark:text-zinc-300">{active ? 'Preferred' : 'Connect'}</div>
+                      </button>
+                    )
+                  }) : (
+                    <div className="rounded-2xl border border-dashed border-zinc-300 px-4 py-5 text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
+                      No wallet detected here yet. Open this page in Base app, Trust Wallet, Bitget Wallet, MetaMask, Rabby, OKX, or another wallet-enabled browser.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-6 md:p-8">
+                <div className="text-center text-4xl font-bold text-zinc-900 dark:text-white">What is a Wallet?</div>
+                <div className="mx-auto mt-10 max-w-md space-y-8">
+                  <div className="flex gap-4">
+                    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-200 to-cyan-200 text-zinc-900 dark:from-indigo-500/30 dark:to-cyan-500/30 dark:text-white">
+                      <Wallet className="h-7 w-7" />
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold text-zinc-900 dark:text-white">A Home for your Digital Assets</div>
+                      <div className="mt-1 text-lg leading-7 text-zinc-600 dark:text-zinc-400">Wallets are used to send, receive, store, and display digital assets like Ethereum and NFTs.</div>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-4">
+                    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-fuchsia-200 to-violet-200 text-zinc-900 dark:from-fuchsia-500/30 dark:to-violet-500/30 dark:text-white">
+                      <Sparkles className="h-7 w-7" />
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold text-zinc-900 dark:text-white">A New Way to Log In</div>
+                      <div className="mt-1 text-lg leading-7 text-zinc-600 dark:text-zinc-400">Instead of creating new accounts and passwords on every website, just connect your wallet.</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {miniLoaded ? <RoadmapBell /> : null}
+    </div>
+  )
+}
