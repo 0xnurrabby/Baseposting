@@ -10,7 +10,7 @@ import { RoadmapBell } from '@/components/RoadmapBell'
 import { LeaderboardPage } from '@/components/LeaderboardPage'
 import { LeaderboardIcon } from '@/components/LeaderboardIcon'
 import { apiGenerate, apiGenerateImage, apiMe, apiShareAward, apiVerifyTx, type Identity } from '@/lib/api'
-import { composeCast, connectWalletProvider, getEthereumProvider, hapticImpact, hapticSelection, initMiniApp, listAvailableWallets, type WalletOption } from '@/lib/miniapp'
+import { composeCast, connectWalletProvider, getEthereumProvider, hapticImpact, hapticSelection, initMiniApp, listAvailableWallets, shareToTwitter, type WalletOption } from '@/lib/miniapp'
 
 const CONTRACT = '0xB331328F506f2D35125e367A190e914B1b6830cF'
 
@@ -31,16 +31,20 @@ const SITE_URL = import.meta.env.VITE_PUBLIC_SITE_URL || window.location.origin
 const WALLET_CREDIT_KEY = 'bp_credits_cache_v1'
 const PENDING_TX_KEY = 'bp_pending_tx_v1'
 
+// Photo generation is temporarily disabled to save on API costs.
+// Flip this flag back to `false` to enable.
+const PHOTO_FEATURE_DISABLED = true
+
 const SHARE_COPY_TEMPLATES = [
-  'Okay this is actually useful 💙 I used to get stuck every day thinking: “What should I post on Base?” 😵‍💫 Now I just open BasePosting — one tap gives banger post ideas + images in seconds. Try it: {url}',
-  'Creators on Base: this is your cheat code ⚡️ BasePosting gives post ideas + images in seconds. Try it: {url}',
+  'Okay this is actually useful 💙 Now I just open BasePosting — one tap gives banger post ideas in seconds. Try it: {url}',
+  'Creators on Base: this is your cheat code ⚡️ BasePosting gives post ideas in seconds. Try it: {url}',
   'Posting on Base got 10x easier. Open BasePosting → pick an idea → post ✅ {url}',
-  'Stop overthinking your next Base post 😮‍💨 BasePosting spits out viral post ideas + images instantly. {url}',
-  'Found a tool that makes posting on Base effortless 🧠✨ BasePosting = ideas + images in seconds. {url}',
-  'Hot tip: if you’re stuck on what to post on Base, use BasePosting 💙 instant ideas + visuals. {url}',
+  'Stop overthinking your next Base post 😮‍💨 BasePosting spits out viral post ideas instantly. {url}',
+  'Found a tool that makes posting on Base effortless 🧠✨ BasePosting = ideas in seconds. {url}',
+  'Hot tip: if you’re stuck on what to post on Base, use BasePosting 💙 {url}',
   'Need a Base post right now? BasePosting → one tap → done 🚀 {url}',
-  'BasePosting is kinda unfair 😅 It generates banger post ideas + images for Base in seconds. {url}',
-  'If you post on Base, you want this. BasePosting gives banger ideas + images in seconds 🔥 {url}',
+  'BasePosting is kinda unfair 😅 Banger post ideas for Base in seconds. {url}',
+  'If you post on Base, you want this. BasePosting gives banger ideas in seconds 🔥 {url}',
 ]
 
 function normalizeSiteUrl(siteUrl: string) {
@@ -107,14 +111,19 @@ function isUserRejection(e: any) {
   return e?.code === 4001 || msg.includes('user rejected') || msg.includes('rejected') || msg.includes('denied')
 }
 
+// Expanded: Trust wallet / Bitget use different error text
 function isMethodNotSupported(e: any) {
   const msg = String(e?.message || '').toLowerCase()
   return (
     e?.code === -32601 ||
+    e?.code === -32004 ||
     msg.includes('method not found') ||
+    msg.includes('does not exist') ||
+    msg.includes('is not available') ||
     msg.includes('does not support the requested method') ||
     msg.includes('unsupported method') ||
-    msg.includes('not supported')
+    msg.includes('not supported') ||
+    msg.includes('unsupported')
   )
 }
 
@@ -123,6 +132,7 @@ function isInvalidParamsOrCapability(e: any) {
   return (
     e?.code === -32602 ||
     msg.includes('invalid params') ||
+    msg.includes('invalid request') ||
     msg.includes('capabilities') ||
     msg.includes('datasuffix') ||
     msg.includes('unknown field') ||
@@ -185,35 +195,6 @@ function raceWithTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> 
   })
 }
 
-// Module-level constants (no re-creation, no useMemo needed)
-const PHOTO_STYLE_OPTIONS = [
-  { key: 'storybook', label: 'Storybook', desc: "Hand-drawn, kids-book watercolor (default vibe)" },
-  { key: 'modern', label: 'Modern', desc: 'Clean, minimal, editorial illustration' },
-  { key: 'realistic', label: 'Realistic', desc: 'Photoreal look (natural light)' },
-  { key: 'cinematic', label: 'Cinematic', desc: 'Dramatic lighting, depth, movie still' },
-  { key: 'anime', label: 'Anime', desc: 'Anime illustration, clean lines, soft shading' },
-  { key: 'comic', label: 'Comic', desc: 'Comic book / inked outlines, punchy shadows' },
-  { key: 'pixel', label: 'Pixel', desc: 'Pixel art, retro game style' },
-  { key: 'isometric', label: 'Isometric', desc: 'Isometric world / diorama' },
-  { key: 'clay', label: 'Clay', desc: 'Claymation / soft 3D clay look' },
-  { key: '3d', label: '3D Render', desc: 'Tasteful 3D render (not plastic)' },
-  { key: 'noir', label: 'Noir', desc: 'Black & white noir, moody contrast' },
-  { key: 'cyberpunk', label: 'Cyberpunk', desc: 'Neon sci-fi city vibe (controlled)' },
-  { key: 'vaporwave', label: 'Vaporwave', desc: 'Retro-futuristic gradients + glow' },
-  { key: 'oil', label: 'Oil Painting', desc: 'Classic oil paint strokes' },
-  { key: 'watercolor', label: 'Watercolor', desc: 'Soft watercolor wash, paper texture' },
-  { key: 'pencil', label: 'Pencil Sketch', desc: 'Graphite sketch / cross-hatching' },
-  { key: 'ink', label: 'Ink Wash', desc: 'Ink wash + brush texture' },
-  { key: 'lowpoly', label: 'Low Poly', desc: 'Low-poly geometric 3D' },
-] as const
-
-function labelForPhotoStyle(preset: string | null): string {
-  if (!preset) return 'Default (from env)'
-  const f = PHOTO_STYLE_OPTIONS.find((o) => o.key === preset)
-  return f ? f.label : preset
-}
-
-// LoadingLabel — memoized; no hooks run when idle.
 const LoadingLabel = React.memo(function LoadingLabel(props: {
   active: boolean
   estimateSec: number
@@ -290,14 +271,6 @@ export default function App() {
   const shareAwardInFlight = useRef(false)
 
   const [result, setResult] = useState<string>('')
-  const [imageUrl, setImageUrl] = useState<string>('')
-  const [imageId, setImageId] = useState<string>('')
-  const [imageError, setImageError] = useState(false)
-  const [generatingImage, setGeneratingImage] = useState(false)
-
-  const PHOTO_STYLE_KEY = 'bp_photo_style_preset_v1'
-  const [photoStyleOpen, setPhotoStyleOpen] = useState(false)
-  const [photoStylePreset, setPhotoStylePreset] = useState<string | null>(null)
 
   const [loadingMe, setLoadingMe] = useState(false)
   const [generating, setGenerating] = useState(false)
@@ -306,7 +279,6 @@ export default function App() {
 
   const [submittingCredit, setSubmittingCredit] = useState(false)
   const [verifyingCredit, setVerifyingCredit] = useState(false)
-
   const verifyInFlight = useRef<string>('')
 
   const [walletConnecting, setWalletConnecting] = useState(false)
@@ -318,8 +290,6 @@ export default function App() {
   const [tipUsd, setTipUsd] = useState('500')
   const [tipStage, setTipStage] = useState<'idle' | 'preparing' | 'confirm' | 'sending' | 'done'>('idle')
 
-  // Refs for values used in callbacks — avoids stale-closure + unnecessary
-  // re-creation of handler functions (which triggers child re-renders).
   const identityRef = useRef<Identity>(identity)
   identityRef.current = identity
   const creditsRef = useRef<number | null>(credits)
@@ -334,8 +304,6 @@ export default function App() {
   isInMiniAppRef.current = isInMiniApp
   const selectedWalletIdRef = useRef<string>(selectedWalletId)
   selectedWalletIdRef.current = selectedWalletId
-  const photoStylePresetRef = useRef<string | null>(photoStylePreset)
-  photoStylePresetRef.current = photoStylePreset
 
   const PENDING_TOAST_KEY = 'bp_pending_toast_v1'
   const PENDING_SHARE_AWARD_KEY = 'bp_pending_share_award_v1'
@@ -348,30 +316,8 @@ export default function App() {
     }
   }
 
-  function toAbsoluteUrl(maybeRelative: string) {
-    const raw = String(maybeRelative || '').trim()
-    if (!raw) return ''
-    try {
-      const base = raw.startsWith('/') ? window.location.origin : SITE_URL
-      return new URL(raw, base).toString()
-    } catch {
-      return raw
-    }
-  }
-
   const walletConnected = Boolean(identity.address)
   const canGenerate = !generating && miniLoaded && walletConnected
-  const photoStyleLabel = labelForPhotoStyle(photoStylePreset)
-
-  function setAndPersistPhotoStyle(next: string | null) {
-    setPhotoStylePreset(next)
-    try {
-      if (!next) localStorage.removeItem(PHOTO_STYLE_KEY)
-      else localStorage.setItem(PHOTO_STYLE_KEY, next)
-    } catch {
-      // ignore
-    }
-  }
 
   useEffect(() => {
     setMounted(true)
@@ -392,9 +338,6 @@ export default function App() {
     } catch {
       // ignore
     }
-
-    const ps = localStorage.getItem(PHOTO_STYLE_KEY)
-    if (ps && typeof ps === 'string') setPhotoStylePreset(ps)
   }, [])
 
   useEffect(() => {
@@ -707,12 +650,6 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [miniLoaded, identity.address])
 
-  // ==========================================================================
-  // Handlers — use refs for deps so their identity is STABLE between renders.
-  // That way child components (BasepostHeader, etc.) never re-render from a
-  // parent state change they don't care about.
-  // ==========================================================================
-
   const openWalletPicker = useCallback(async () => {
     setWalletConnecting(true)
     try {
@@ -730,7 +667,7 @@ export default function App() {
       setWalletOptions(clean)
       setWalletModalOpen(true)
       if (!clean.length) {
-        toast.error('No wallet found. Open this app in Base, Trust, MetaMask, Rabby, OKX, or another wallet-enabled browser.')
+        toast.error('No wallet found. Open this app in Base, Trust, MetaMask, Rabby, OKX, Bitget, or another wallet-enabled browser.')
       }
     } catch (e: any) {
       toast.error(e?.message || 'Failed to detect wallets')
@@ -824,7 +761,6 @@ export default function App() {
 
     setGenerating(true)
     setResult('')
-    setImageUrl('')
     try {
       await hapticImpact(capabilitiesRef.current, 'medium')
       const out = await apiGenerate(id, '')
@@ -844,51 +780,6 @@ export default function App() {
     }
   }, [generating, miniLoaded, ensureWalletIdentity])
 
-  const onGeneratePhoto = useCallback(async () => {
-    const current = resultRef.current
-    if (!current) {
-      toast.message('Generate a Basepost first')
-      return
-    }
-
-    let id = identityRef.current
-    if (!id.address) {
-      const addr = await ensureWalletIdentity()
-      if (!addr) return
-      id = { address: addr }
-    }
-
-    const currentCredits = creditsRef.current ?? 5
-    if (currentCredits < 5) {
-      toast.error('Need 5 credits for a photo')
-      return
-    }
-
-    setGeneratingImage(true)
-    setImageUrl('')
-    setImageId('')
-    setImageError(false)
-    try {
-      await hapticImpact(capabilitiesRef.current, 'medium')
-      const out = await apiGenerateImage(id, current, photoStylePresetRef.current || undefined)
-      const path = out.imageDataUrl || out.imageUrl || (out.imageId ? `/api/image?id=${encodeURIComponent(out.imageId)}` : '')
-      setImageUrl(toAbsoluteUrl(path))
-      setImageId(out.imageId || '')
-      setCredits(out.credits)
-      toast.success('Photo ready 📸')
-    } catch (e: any) {
-      const status = (e as any)?.status
-      if (status === 402) {
-        setCredits((e as any)?.data?.credits ?? 0)
-        toast.error('Not enough credits')
-      } else {
-        toast.error(e?.message || 'Image generation failed')
-      }
-    } finally {
-      setGeneratingImage(false)
-    }
-  }, [ensureWalletIdentity])
-
   const onCopy = useCallback(async () => {
     const current = resultRef.current
     if (!current) return
@@ -901,26 +792,22 @@ export default function App() {
     }
   }, [])
 
+  // POST DIRECTLY — now goes to Twitter / X (not Farcaster).
+  // Mobile shows the OS app chooser (X app / clone). Desktop opens web composer.
   const onPostDirectly = useCallback(async () => {
     const current = resultRef.current
     if (!current) return
     setPosting(true)
     try {
       await hapticImpact(capabilitiesRef.current, 'light')
-      setPendingToast('success', 'Welcome back ✅')
-      const embed = imageUrl?.startsWith('http')
-        ? imageUrl
-        : imageId
-          ? `${SITE_URL}/api/image?id=${encodeURIComponent(imageId)}`
-          : ''
-      void composeCast({ text: current, embeds: embed ? [embed] : undefined })
+      shareToTwitter({ text: current })
     } catch (e: any) {
-      if (isUserRejection(e)) return toast.message('Post cancelled')
-      toast.error(e?.message || 'Failed to open composer')
+      toast.error(e?.message || 'Failed to open Twitter composer')
     } finally {
-      setPosting(false)
+      // release the button quickly; the user is now in the X app
+      setTimeout(() => setPosting(false), 500)
     }
-  }, [imageUrl, imageId])
+  }, [])
 
   const onShareForCredits = useCallback(async () => {
     if (!shareEligible) {
@@ -1000,18 +887,6 @@ export default function App() {
         }
       }
 
-      const dataSuffix = (window as any).__ERC8021_DATA_SUFFIX__
-
-      let paymasterSupported = false
-      if (PAYMASTER_SERVICE_URL) {
-        try {
-          const caps = await provider.request({ method: 'wallet_getCapabilities', params: [addr] })
-          paymasterSupported = Boolean(caps?.['0x2105']?.paymasterService?.supported)
-        } catch {
-          paymasterSupported = false
-        }
-      }
-
       const action = keccak256(toHex('BASEPOSTING_GET_CREDIT'))
       const payload = toHex(
         JSON.stringify({ address: addr, ts: Date.now(), app: 'BasePosting' })
@@ -1023,41 +898,46 @@ export default function App() {
         args: [action, payload],
       })
 
-      const dataWithSuffix = appendCalldataSuffix(data as `0x${string}`, dataSuffix)
-      const callCapabilities: any = {
-        ...(dataSuffix ? { dataSuffix: { value: dataSuffix, optional: true } } : {}),
-        ...(paymasterSupported ? { paymasterService: { url: PAYMASTER_SERVICE_URL } } : {}),
-      }
-
-      const callsPayloadWithCaps: any = {
-        version: '2.0.0',
-        from: addr,
-        chainId: '0x2105',
-        atomicRequired: true,
-        calls: [{ to: CONTRACT, value: '0x0', data }],
-        ...(Object.keys(callCapabilities).length ? { capabilities: callCapabilities } : {}),
-      }
-
-      const callsPayloadNoCaps: any = {
-        version: '2.0.0',
-        from: addr,
-        chainId: '0x2105',
-        atomicRequired: true,
-        calls: [{ to: CONTRACT, value: '0x0', data: dataWithSuffix }],
-      }
-
+      // ---------------- TX SUBMISSION ----------------
+      // Strategy:
+      //   1) Try wallet_sendCalls (Base smart wallet path)
+      //   2) If the wallet doesn't support it OR returns invalid-request,
+      //      fall back to plain eth_sendTransaction.
+      //   3) If balance is 0 and fallback can't pay gas, tell the user.
+      //
+      // This is the ONLY path that non-smart wallets like Trust / Bitget /
+      // MetaMask mobile support.
       let txHash = ''
-      try {
-        let sendRes: any
-        try {
-          sendRes = await provider.request({ method: 'wallet_sendCalls', params: [callsPayloadWithCaps] })
-        } catch (e: any) {
-          if (isInvalidParamsOrCapability(e)) {
-            sendRes = await provider.request({ method: 'wallet_sendCalls', params: [callsPayloadNoCaps] })
-          } else {
-            throw e
-          }
+      let usedFallback = false
+
+      // helper: plain legacy eth_sendTransaction
+      const sendLegacyTx = async () => {
+        const balHex = (await provider.request({ method: 'eth_getBalance', params: [addr, 'latest'] })) as string
+        if (BigInt(balHex) === 0n) {
+          throw new Error(
+            'Your wallet has 0 Base ETH to pay gas. Please add a small amount of ETH on Base (any bridge like bridge.base.org works) and retry.'
+          )
         }
+        const tx: any = {
+          from: addr,
+          to: CONTRACT,
+          data,
+          // NOTE: we intentionally OMIT `value`. Some wallets (Trust) reject
+          // `value: '0x0'` as "invalid request". `value` defaults to 0 when omitted.
+        }
+        return (await provider.request({ method: 'eth_sendTransaction', params: [tx] })) as string
+      }
+
+      // Attempt 1: wallet_sendCalls
+      try {
+        const callsPayload: any = {
+          version: '2.0.0',
+          from: addr,
+          chainId: '0x2105',
+          atomicRequired: false, // be lenient
+          calls: [{ to: CONTRACT, data }],
+        }
+        const sendRes: any = await provider.request({ method: 'wallet_sendCalls', params: [callsPayload] })
 
         const confirmationId =
           typeof sendRes === 'string'
@@ -1065,7 +945,7 @@ export default function App() {
             : sendRes?.callsId || sendRes?.batchId || sendRes?.id || sendRes?.result || sendRes?.hash
 
         if (!confirmationId || typeof confirmationId !== 'string') {
-          throw new Error('wallet_sendCalls did not return a valid confirmation id.')
+          throw new Error('wallet_sendCalls returned no id')
         }
 
         toast.message('Transaction submitted. Verifying on-chain…')
@@ -1073,18 +953,24 @@ export default function App() {
           ? confirmationId
           : await waitForCallsTxHash(provider, confirmationId, { timeoutMs: 20000, pollMs: 1200 })
       } catch (e: any) {
-        if (!isMethodNotSupported(e)) throw e
-
-        const balHex = (await provider.request({ method: 'eth_getBalance', params: [addr, 'latest'] })) as string
-        if (BigInt(balHex) === 0n) {
-          throw new Error(
-            'Your wallet provider in this host does not support wallet_sendCalls, and your account has 0 Base ETH for gas. Add a little ETH on Base and retry.',
-          )
+        // Fallback to legacy eth_sendTransaction for non-smart wallets.
+        if (isMethodNotSupported(e) || isInvalidParamsOrCapability(e)) {
+          usedFallback = true
+        } else if (isUserRejection(e)) {
+          throw e
+        } else {
+          // Unknown error — still try the legacy path as a safety net.
+          usedFallback = true
         }
+      }
 
-        const tx = { from: addr, to: CONTRACT, value: '0x0', data: dataWithSuffix }
-        txHash = (await provider.request({ method: 'eth_sendTransaction', params: [tx] })) as string
+      if (!txHash && usedFallback) {
+        txHash = await sendLegacyTx()
         toast.message('Transaction submitted. Verifying on-chain…')
+      }
+
+      if (!txHash) {
+        throw new Error('Could not submit transaction. Please try again.')
       }
 
       savePendingTx(txHash, addr)
@@ -1142,7 +1028,6 @@ export default function App() {
   }
 
   const onSendTip = useCallback(async () => {
-    const dataSuffix = (window as any).__ERC8021_DATA_SUFFIX__
     if (!isAddress(RECIPIENT)) {
       toast.error('Tip recipient is invalid')
       return
@@ -1183,50 +1068,34 @@ export default function App() {
 
       const recipient = getAddress(RECIPIENT)
       const data = encodeErc20Transfer(recipient, amount)
-      const dataWithSuffix = appendCalldataSuffix(data as `0x${string}`, dataSuffix)
 
       setTipStage('confirm')
 
-      const callsPayloadWithCaps: any = {
-        version: '2.0.0',
-        from: addr,
-        chainId: '0x2105',
-        atomicRequired: true,
-        calls: [{ to: USDC_CONTRACT, value: '0x0', data }],
-        ...(dataSuffix
-          ? { capabilities: { dataSuffix: { value: dataSuffix, optional: true } } }
-          : {}),
-      }
-
-      const callsPayloadNoCaps: any = {
-        version: '2.0.0',
-        from: addr,
-        chainId: '0x2105',
-        atomicRequired: true,
-        calls: [{ to: USDC_CONTRACT, value: '0x0', data: dataWithSuffix }],
-      }
-
+      // Try wallet_sendCalls then fall back to eth_sendTransaction (Trust etc.)
+      let submitted = false
       try {
-        try {
-          await provider.request({ method: 'wallet_sendCalls', params: [callsPayloadWithCaps] })
-        } catch (e: any) {
-          if (isInvalidParamsOrCapability(e)) {
-            await provider.request({ method: 'wallet_sendCalls', params: [callsPayloadNoCaps] })
-          } else {
-            throw e
-          }
-        }
+        await provider.request({
+          method: 'wallet_sendCalls',
+          params: [{
+            version: '2.0.0',
+            from: addr,
+            chainId: '0x2105',
+            atomicRequired: false,
+            calls: [{ to: USDC_CONTRACT, data }],
+          }],
+        })
+        submitted = true
       } catch (e: any) {
-        if (!isMethodNotSupported(e)) throw e
-
-        const balHex = (await provider.request({ method: 'eth_getBalance', params: [addr, 'latest'] })) as string
-        if (BigInt(balHex) === 0n) {
-          throw new Error('This wallet cannot send batch calls here, and you have 0 Base ETH for gas. Add Base ETH and retry.')
+        if (!isMethodNotSupported(e) && !isInvalidParamsOrCapability(e)) {
+          if (isUserRejection(e)) throw e
         }
+      }
 
-        const tx = { from: addr, to: USDC_CONTRACT, value: '0x0', data: dataWithSuffix }
+      if (!submitted) {
+        const tx = { from: addr, to: USDC_CONTRACT, data }
         await provider.request({ method: 'eth_sendTransaction', params: [tx] })
       }
+
       setTipStage('sending')
       await new Promise((r) => setTimeout(r, 500))
       setTipStage('done')
@@ -1245,7 +1114,6 @@ export default function App() {
     setTipStage('idle')
   }, [])
 
-  const openPhotoStyle = useCallback(() => setPhotoStyleOpen(true), [])
   const openLeaderboard = useCallback(() => setView('leaderboard'), [])
   const goHome = useCallback(() => setView('home'), [])
   const toggleTheme = useCallback(() => setDark((v) => !v), [])
@@ -1254,7 +1122,6 @@ export default function App() {
   const creditsLabel = credits === null ? '—' : String(credits)
   const creditBusy = submittingCredit || verifyingCredit
   const creditLoadingText = submittingCredit ? 'Confirm in wallet' : 'Verifying tx'
-  const photoDisabled = !result || generating || posting || generatingImage
 
   if (!miniLoaded) {
     return (
@@ -1397,197 +1264,74 @@ export default function App() {
                 </CardContent>
               </Card>
 
-              {/* Basepost card — built from plain divs (not Card/CardHeader/CardContent)
-                  to sidestep any Card-component class churn that was causing blink
-                  in Base app's webview. Layout & style locked in with explicit
-                  min-heights + stable classNames. */}
-              <div
-                className="mt-6 rounded-2xl border border-zinc-200 bg-white/70 p-5 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/50"
-                style={{ contain: 'layout paint' }}
-              >
-                <div
-                  className="flex items-start justify-between gap-3"
-                  style={{ minHeight: 56 }}
-                >
-                  <div>
-                    <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Basepost</div>
-                    <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-                      Photo style: <span className="font-semibold text-zinc-900 dark:text-zinc-100">{photoStyleLabel}</span>
+              <Card className="mt-6">
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Basepost</div>
+                      <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                        Share your generated post directly to X.
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="flex items-center gap-2 shrink-0 -mt-0.5">
-                    <button
-                      onClick={openPhotoStyle}
-                      className="rounded-2xl p-2 text-zinc-700 transition hover:bg-zinc-100 active:scale-[0.98] dark:text-zinc-200 dark:hover:bg-zinc-900"
-                      aria-label="Choose photo style"
-                      title="Choose photo style"
-                    >
-                      <Palette className="h-7 w-7 lb-rainbow" />
-                    </button>
-
-                    {/* variant FIXED to "success" permanently — no re-style flicker */}
+                    {/* Photo generation disabled for now */}
                     <Button
-                      variant="success"
+                      variant="secondary"
                       isLoading={false}
-                      disabled={photoDisabled}
-                      onClick={onGeneratePhoto}
-                      className="px-5 py-2.5 text-sm"
+                      disabled
+                      className="px-5 py-2.5 text-sm opacity-70"
+                      title="Photo generation is temporarily disabled"
                     >
-                      <LoadingLabel
-                        active={generatingImage}
-                        estimateSec={35}
-                        idleText="Generate Photo (-5c)"
-                        icon={<ImageIcon className="h-4 w-4" />}
-                      />
+                      <ImageIcon className="h-4 w-4" />
+                      Photo: off
                     </Button>
                   </div>
-                </div>
 
-                <div className="mt-4" style={{ minHeight: 120 }}>
-                  {generatingImage ? (
-                    <Skeleton className="w-full rounded-2xl" style={{ height: 240 }} />
-                  ) : imageUrl ? (
-                    <>
-                      <img
-                        src={imageUrl}
-                        alt="Generated"
-                        className="w-full rounded-2xl border border-zinc-200 bg-white object-cover dark:border-zinc-800 dark:bg-zinc-950"
-                        style={{ aspectRatio: '4 / 3' }}
-                        loading="eager"
-                        decoding="async"
-                        referrerPolicy="no-referrer"
-                        onLoad={() => setImageError(false)}
-                        onError={() => setImageError(true)}
-                      />
-
-                      {imageError ? (
-                        <div className="mt-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-900 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
-                          Couldn’t load the generated image.
-                          <button
-                            className="ml-2 underline underline-offset-2"
-                            onClick={() => {
-                              setImageError(false)
-                              setImageUrl((prev) => {
-                                if (!prev) return prev
-                                if (prev.startsWith('data:')) return prev
-                                return `${prev}${prev.includes('?') ? '&' : '?'}cb=${Date.now()}`
-                              })
-                            }}
-                          >
-                            Retry
-                          </button>
-                        </div>
-                      ) : null}
-                    </>
-                  ) : generating ? (
-                    <div className="space-y-3">
-                      <Skeleton className="h-4 w-full" />
-                      <Skeleton className="h-4 w-11/12" />
-                      <Skeleton className="h-4 w-4/5" />
-                    </div>
-                  ) : result ? (
-                    <div className="whitespace-pre-wrap rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
-                      {result}
-                    </div>
-                  ) : (
-                    <div className="text-sm text-zinc-600 dark:text-zinc-400">Hit Generate to see your post here ⌯⌲</div>
-                  )}
-                </div>
-
-                <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-                  <Button
-                    variant="primary"
-                    isLoading={posting}
-                    disabled={!result}
-                    onClick={onPostDirectly}
-                    className="w-full sm:w-auto"
-                  >
-                    <Send className="h-4 w-4" />
-                    Post Directly
-                  </Button>
-
-                  <Button
-                    variant="secondary"
-                    disabled={!result}
-                    onClick={onCopy}
-                    className="w-full sm:w-auto"
-                  >
-                    <Copy className="h-4 w-4" />
-                    Copy
-                  </Button>
-                </div>
-              </div>
-
-              {photoStyleOpen ? (
-                <div className="fixed inset-0 z-50">
-                  <div
-                    className="absolute inset-0 bg-black/50"
-                    onClick={() => setPhotoStyleOpen(false)}
-                  />
-
-                  <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-2xl rounded-t-3xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Photo style</div>
-                        <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-                          Pick a style, or keep default. (Current: <span className="font-semibold">{photoStyleLabel}</span>)
-                        </div>
-                      </div>
-                      <button
-                        className="rounded-xl p-2 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                        onClick={() => setPhotoStyleOpen(false)}
-                        aria-label="Close"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-
-                    <div className="mt-4 grid grid-cols-2 gap-2 max-h-[48vh] overflow-auto pr-1">
-                      <button
-                        onClick={() => {
-                          void hapticSelection(capabilitiesRef.current)
-                          setAndPersistPhotoStyle(null)
-                          setPhotoStyleOpen(false)
-                          toast.message('Using default style')
-                        }}
-                        className={`rounded-2xl border px-3 py-3 text-left transition active:scale-[0.98] ${
-                          !photoStylePreset
-                            ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
-                            : 'border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900'
-                        }`}
-                      >
-                        <div className="text-sm font-semibold">Default</div>
-                        <div className="mt-0.5 text-xs opacity-80">Use server env default</div>
-                      </button>
-
-                      {PHOTO_STYLE_OPTIONS.map((opt) => (
-                        <button
-                          key={opt.key}
-                          onClick={() => {
-                            void hapticSelection(capabilitiesRef.current)
-                            setAndPersistPhotoStyle(opt.key)
-                            setPhotoStyleOpen(false)
-                            toast.message(`Style: ${opt.label}`)
-                          }}
-                          className={`rounded-2xl border px-3 py-3 text-left transition active:scale-[0.98] ${
-                            photoStylePreset === opt.key
-                              ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
-                              : 'border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900'
-                          }`}
-                        >
-                          <div className="text-sm font-semibold">{opt.label}</div>
-                          <div className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">{opt.desc}</div>
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="mt-3 text-xs text-zinc-500 dark:text-zinc-500">
-                      Tip: If you select nothing, the server will use default.
-                    </div>
+                  <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-2 text-[11px] font-medium text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+                    📸 Photo generation is temporarily disabled (cost saving). It will be back on soon.
                   </div>
-                </div>
-              ) : null}
+                </CardHeader>
+                <CardContent>
+                  <div style={{ minHeight: 120 }}>
+                    {generating ? (
+                      <div className="space-y-3">
+                        <Skeleton className="h-4 w-full" />
+                        <Skeleton className="h-4 w-11/12" />
+                        <Skeleton className="h-4 w-4/5" />
+                      </div>
+                    ) : result ? (
+                      <div className="whitespace-pre-wrap rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
+                        {result}
+                      </div>
+                    ) : (
+                      <div className="text-sm text-zinc-600 dark:text-zinc-400">Hit Generate to see your post here ⌯⌲</div>
+                    )}
+                  </div>
+
+                  <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                    <Button
+                      variant="primary"
+                      isLoading={posting}
+                      disabled={!result}
+                      onClick={onPostDirectly}
+                      className="w-full sm:w-auto"
+                    >
+                      <Send className="h-4 w-4" />
+                      Post to X
+                    </Button>
+
+                    <Button
+                      variant="secondary"
+                      disabled={!result}
+                      onClick={onCopy}
+                      className="w-full sm:w-auto"
+                    >
+                      <Copy className="h-4 w-4" />
+                      Copy
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
 
               {tipOpen ? (
                 <div className="fixed inset-0 z-50">
@@ -1603,162 +1347,4 @@ export default function App() {
                         <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Network: Base Mainnet • Token: USDC</div>
                       </div>
                       <button
-                        className="rounded-xl p-2 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                        onClick={closeTip}
-                        aria-label="Close"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-
-                    {tipStage === 'done' ? (
-                      <div className="mt-8 flex flex-col items-center text-center">
-                        <div className="flex h-14 w-14 items-center justify-center rounded-full border border-zinc-200 bg-zinc-50 text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white">
-                          <HandCoins className="h-6 w-6" />
-                        </div>
-                        <div className="mt-4 text-base font-semibold text-zinc-900 dark:text-zinc-100">Tip sent 💙</div>
-                        <div className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Thank you. You’re making this mini app better.</div>
-                        <div className="mt-4 text-xs text-zinc-500 dark:text-zinc-500">Closing…</div>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="mt-4 grid grid-cols-4 gap-2">
-                          {[100, 250, 500, 1000].map((v) => (
-                            <button
-                              key={v}
-                              onClick={() => setTipUsd(String(v))}
-                              className={`rounded-2xl border px-3 py-2 text-sm font-semibold transition active:scale-[0.98] ${
-                                String(v) === String(tipUsd)
-                                  ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
-                                  : 'border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900'
-                              }`}
-                            >
-                              ${v}
-                            </button>
-                          ))}
-                        </div>
-
-                        <div className="mt-3">
-                          <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Custom amount (USD)</label>
-                          <input
-                            value={tipUsd}
-                            onChange={(e) => setTipUsd(e.target.value)}
-                            inputMode="decimal"
-                            placeholder="500"
-                            className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none transition focus:border-zinc-400 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-zinc-600"
-                          />
-                        </div>
-
-                        <div className="mt-4">
-                          <Button
-                            variant="primary"
-                            className="w-full"
-                            isLoading={tipStage === 'preparing' || tipStage === 'confirm' || tipStage === 'sending'}
-                            disabled={tipStage !== 'idle'}
-                            onClick={onSendTip}
-                          >
-                            <HandCoins className="h-4 w-4" />
-                            {tipStage === 'idle'
-                              ? 'Send USDC'
-                              : tipStage === 'preparing'
-                                ? 'Preparing tip…'
-                                : tipStage === 'confirm'
-                                  ? 'Confirm in wallet'
-                                  : 'Sending…'}
-                          </Button>
-                          <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
-                            Recipient: <span className="font-mono">{shortAddress(RECIPIENT)}</span>
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-              ) : null}
-            </>
-          )}
-
-          <div className="mt-8 text-center text-xs text-zinc-500 dark:text-zinc-500">
-            © Copyright 2026
-          </div>
-        </div>
-      </div>
-
-      {walletModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-4xl overflow-hidden rounded-[28px] border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
-            <div className="grid md:grid-cols-[360px_minmax(0,1fr)]">
-              <div className="border-b border-zinc-200 p-6 md:border-b-0 md:border-r dark:border-zinc-800">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-2xl font-bold text-zinc-900 dark:text-white">Connect a Wallet</div>
-                    <div className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Click a detected wallet to connect.</div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setWalletModalOpen(false)}
-                    className="rounded-full p-2 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-900 dark:hover:text-white"
-                    aria-label="Close wallet modal"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
-                </div>
-
-                <div className="mt-6 space-y-2">
-                  {walletOptions.length ? walletOptions.map((option) => {
-                    const active = option.id === selectedWalletId
-                    return (
-                      <button
-                        key={option.id}
-                        type="button"
-                        onClick={() => void connectWallet(option)}
-                        className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition ${active ? 'border-zinc-900 bg-zinc-100 dark:border-white dark:bg-zinc-900' : 'border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/70'}`}
-                      >
-                        <div>
-                          <div className="text-base font-semibold text-zinc-900 dark:text-white">{option.name}</div>
-                          <div className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">{option.source === 'miniapp' ? 'Detected from current mini app host' : 'Detected from this browser / device'}</div>
-                        </div>
-                        <div className="rounded-full border border-zinc-200 px-2 py-1 text-[11px] font-semibold text-zinc-600 dark:border-zinc-700 dark:text-zinc-300">{active ? 'Preferred' : 'Connect'}</div>
-                      </button>
-                    )
-                  }) : (
-                    <div className="rounded-2xl border border-dashed border-zinc-300 px-4 py-5 text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
-                      No wallet detected here yet. Open this page in Base app, Trust Wallet, MetaMask, Rabby, OKX, or another wallet-enabled browser.
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="p-6 md:p-8">
-                <div className="text-center text-4xl font-bold text-zinc-900 dark:text-white">What is a Wallet?</div>
-                <div className="mx-auto mt-10 max-w-md space-y-8">
-                  <div className="flex gap-4">
-                    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-200 to-cyan-200 text-zinc-900 dark:from-indigo-500/30 dark:to-cyan-500/30 dark:text-white">
-                      <Wallet className="h-7 w-7" />
-                    </div>
-                    <div>
-                      <div className="text-2xl font-bold text-zinc-900 dark:text-white">A Home for your Digital Assets</div>
-                      <div className="mt-1 text-lg leading-7 text-zinc-600 dark:text-zinc-400">Wallets are used to send, receive, store, and display digital assets like Ethereum and NFTs.</div>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-4">
-                    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-fuchsia-200 to-violet-200 text-zinc-900 dark:from-fuchsia-500/30 dark:to-violet-500/30 dark:text-white">
-                      <Sparkles className="h-7 w-7" />
-                    </div>
-                    <div>
-                      <div className="text-2xl font-bold text-zinc-900 dark:text-white">A New Way to Log In</div>
-                      <div className="mt-1 text-lg leading-7 text-zinc-600 dark:text-zinc-400">Instead of creating new accounts and passwords on every website, just connect your wallet.</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {miniLoaded ? <RoadmapBell /> : null}
-    </div>
-  )
-}
+                        className="rounded-xl p-2 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-
