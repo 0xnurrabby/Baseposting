@@ -6,7 +6,6 @@ function toUserId(bodyOrQuery: any) {
   const address = bodyOrQuery?.address
   if (typeof fid === 'number' && Number.isFinite(fid)) return `fid:${fid}`
   if (typeof fid === 'string' && fid.trim() && !Number.isNaN(Number(fid))) return `fid:${Number(fid)}`
-  // reward address submissions are only allowed for Farcaster IDs in this app
   if (typeof address === 'string' && address.startsWith('0x') && address.length >= 42) return `addr:${address.toLowerCase()}`
   return null
 }
@@ -24,8 +23,9 @@ export default async function handler(req: any, res: any) {
   if (req.method === 'GET') {
     const url = new URL(req.url || '', 'http://x')
     const fid = url.searchParams.get('fid')
-    const userId = toUserId({ fid })
-    if (!userId) return json(res, 400, { ok: false, error: 'Missing fid' })
+    const address = url.searchParams.get('address')
+    const userId = toUserId({ fid, address })
+    if (!userId) return json(res, 400, { ok: false, error: 'Missing fid or address' })
 
     const existing = await getRewardAddress(userId)
     return json(res, 200, { ok: true, userId, baseAddress: existing })
@@ -41,8 +41,8 @@ export default async function handler(req: any, res: any) {
   }
 
   const userId = toUserId(body)
-  if (!userId || !userId.startsWith('fid:')) {
-    return json(res, 400, { ok: false, error: 'Missing fid' })
+  if (!userId) {
+    return json(res, 400, { ok: false, error: 'Missing user identity (fid or address)' })
   }
 
   const baseAddress = String(body?.baseAddress || '').trim()
