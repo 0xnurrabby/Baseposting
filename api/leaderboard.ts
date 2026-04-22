@@ -11,46 +11,6 @@ function pickPeriod(p: any): LeaderboardPeriod {
   return '7d'
 }
 
-async function fetchFarcasterUsersByFids(
-  fids: number[]
-): Promise<Record<number, { displayName?: string; username?: string; pfpUrl?: string }>> {
-  const apiKey = String(process.env.NEYNAR_API_KEY || '').trim()
-  if (!apiKey) return {}
-  if (!fids.length) return {}
-
-  const url = `https://api.neynar.com/v2/farcaster/user/bulk?fids=${encodeURIComponent(fids.join(','))}`
-  const controller = new AbortController()
-  const t = setTimeout(() => controller.abort(), 3500)
-  try {
-    const r = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'x-api-key': apiKey,
-        Accept: 'application/json',
-      },
-      signal: controller.signal,
-    })
-    if (!r.ok) return {}
-    const data: any = await r.json()
-    const users: any[] = Array.isArray(data?.users) ? data.users : []
-    const out: Record<number, { displayName?: string; username?: string; pfpUrl?: string }> = {}
-    for (const u of users) {
-      const fid = Number(u?.fid)
-      if (!Number.isFinite(fid)) continue
-      out[fid] = {
-        displayName: u?.display_name ? String(u.display_name) : (u?.displayName ? String(u.displayName) : undefined),
-        username: u?.username ? String(u.username) : undefined,
-        pfpUrl: u?.pfp_url ? String(u.pfp_url) : (u?.pfpUrl ? String(u.pfpUrl) : undefined),
-      }
-    }
-    return out
-  } catch {
-    return {}
-  } finally {
-    clearTimeout(t)
-  }
-}
-
 function readGiveawayConfig(): { totalUsd: number; winners: number } | null {
   const totalUsd = Number(String(process.env.GIVEAWAY_TOTAL_USD || process.env.GIVEAWAY_TOTAL || '').trim())
   const winners = Number(String(process.env.GIVEAWAY_WINNERS || process.env.GIVEAWAY_N || '').trim())
@@ -94,18 +54,11 @@ export default async function handler(req: any, res: any) {
   const giveawayCfg = readGiveawayConfig()
   const { entries, meta } = await readLeaderboard(period)
   const addrMap = await getRewardAddresses(entries.map((e) => e.userId))
-  const fids = entries.map((e) => e.fid).filter((x): x is number => typeof x === 'number' && Number.isFinite(x))
-  const profileMap = await fetchFarcasterUsersByFids(Array.from(new Set(fids)).slice(0, 100))
 
+  // NO MORE Neynar / Farcaster profile enrichment. We only return addresses.
   const enriched: LeaderboardEntry[] = entries.map((e, idx) => {
-    const fid = e.fid
     const baseAddress = addrMap[e.userId] || e.baseAddress || null
     const rewardUsd = rewardForRank(idx + 1, giveawayCfg)
-
-    if (fid != null && profileMap[fid]) {
-      const p = profileMap[fid]
-      return { ...e, baseAddress, displayName: p.displayName, username: p.username, pfpUrl: p.pfpUrl, rewardUsd }
-    }
     return { ...e, baseAddress, rewardUsd }
   })
 
