@@ -1165,12 +1165,13 @@ export default function App() {
                       disabled={!canGenerate || generating}
                       onClick={onGenerate}
                     >
-                      <LoadingLabel
-                        active={generating}
-                        estimateSec={20}
-                        idleText="Generate (-3c)"
-                        icon={<Sparkles className="h-4 w-4" />}
-                      />
+                    <LoadingLabel
+  active={generating}
+  estimateSec={8}
+  idleText="Generate (-3c)"
+  icon={<Sparkles className="h-4 w-4" />}
+/>
+
                     </Button>
 
                     <div className="flex flex-col gap-2 sm:flex-row">
