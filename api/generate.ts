@@ -666,7 +666,8 @@ export default async function handler(req: any, res: any) {
 
       try { await pushRecent(userId, 'post', { ts: Date.now(), styleId: usedStyle.id, topicTag: usedTopicTag, text }, 12) } catch {}
       try { await incrementMetric(userId, 'postCount', 1, 2) } catch {}
-      try { await logCreditSpend({ userId, creditsSpent: 1, postDelta: 1 }) } catch {}
+      try { await logCreditSpend({ userId, creditsSpent: 3, postDelta: 1 }) } catch {}
+
 
       return json(res, 200, {
         ok: true,
@@ -678,7 +679,8 @@ export default async function handler(req: any, res: any) {
       })
     } catch (e: any) {
       if (charged) {
-        try { await adjustCredits(userId, +1) } catch { /* ignore */ }
+           try { await adjustCredits(userId, +3) } catch { /* ignore */ }
+
       }
       return json(res, 500, { error: e?.message || 'Generation failed' })
     }
