@@ -186,7 +186,7 @@ function raceWithTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> 
 }
 
 // ---------------------------------------------------------------------------
-// LoadingLabel — memoized; no hooks running when idle.
+// LoadingLabel — memoized; no hooks run when idle.
 // ---------------------------------------------------------------------------
 const LoadingLabel = React.memo(function LoadingLabel(props: {
   active: boolean
@@ -245,6 +245,60 @@ const LoadingLabel = React.memo(function LoadingLabel(props: {
   )
 })
 
+// ---------------------------------------------------------------------------
+// Basepost card header — memoized separately so it doesn't re-render when
+// unrelated parent state changes. This kills the "photo button / header row"
+// blink we saw in Base app.
+// ---------------------------------------------------------------------------
+type PhotoStyleOption = { key: string; label: string; desc: string }
+
+const BasepostHeader = React.memo(function BasepostHeader(props: {
+  photoStyleLabel: string
+  generatingImage: boolean
+  photoDisabled: boolean
+  onOpenStyle: () => void
+  onGeneratePhoto: () => void
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div>
+        <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Basepost</div>
+        <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+          Photo style: <span className="font-semibold text-zinc-900 dark:text-zinc-100">{props.photoStyleLabel}</span>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 shrink-0 -mt-0.5">
+        <button
+          onClick={props.onOpenStyle}
+          className="rounded-2xl p-2 text-zinc-700 transition hover:bg-zinc-100 active:scale-[0.98] dark:text-zinc-200 dark:hover:bg-zinc-900"
+          aria-label="Choose photo style"
+          title="Choose photo style"
+        >
+          <Palette className="h-7 w-7 lb-rainbow" />
+        </button>
+
+        {/* IMPORTANT: variant is fixed to "success" forever to prevent
+            re-style flicker in Base app. Disabled state alone gates usage. */}
+        <Button
+          variant="success"
+          isLoading={false}
+          disabled={props.photoDisabled}
+          onClick={props.onGeneratePhoto}
+          className="px-5 py-2.5 text-sm"
+        >
+          <LoadingLabel
+            active={props.generatingImage}
+            estimateSec={35}
+            idleText="Generate Photo (-5c)"
+            icon={<ImageIcon className="h-4 w-4" />}
+          />
+        </Button>
+      </div>
+    </div>
+  )
+})
+
 export default function App() {
   const [mounted, setMounted] = useState(false)
   const [dark, setDark] = useState(true)
@@ -278,9 +332,6 @@ export default function App() {
   const [posting, setPosting] = useState(false)
   const [sharing, setSharing] = useState(false)
 
-  // Get-Credit flow: we distinguish 2 phases now so the button is never "dead".
-  //   submittingCredit = user is confirming the tx in the wallet
-  //   verifyingCredit  = tx submitted, we are polling the chain / our backend
   const [submittingCredit, setSubmittingCredit] = useState(false)
   const [verifyingCredit, setVerifyingCredit] = useState(false)
 
@@ -320,28 +371,27 @@ export default function App() {
   const walletConnected = Boolean(identity.address)
   const canGenerate = useMemo(() => !generating && miniLoaded && walletConnected, [generating, miniLoaded, walletConnected])
 
-  const PHOTO_STYLE_OPTIONS = useMemo(
-    () =>
-      [
-        { key: 'storybook', label: 'Storybook', desc: "Hand-drawn, kids-book watercolor (default vibe)" },
-        { key: 'modern', label: 'Modern', desc: 'Clean, minimal, editorial illustration' },
-        { key: 'realistic', label: 'Realistic', desc: 'Photoreal look (natural light)' },
-        { key: 'cinematic', label: 'Cinematic', desc: 'Dramatic lighting, depth, movie still' },
-        { key: 'anime', label: 'Anime', desc: 'Anime illustration, clean lines, soft shading' },
-        { key: 'comic', label: 'Comic', desc: 'Comic book / inked outlines, punchy shadows' },
-        { key: 'pixel', label: 'Pixel', desc: 'Pixel art, retro game style' },
-        { key: 'isometric', label: 'Isometric', desc: 'Isometric world / diorama' },
-        { key: 'clay', label: 'Clay', desc: 'Claymation / soft 3D clay look' },
-        { key: '3d', label: '3D Render', desc: 'Tasteful 3D render (not plastic)' },
-        { key: 'noir', label: 'Noir', desc: 'Black & white noir, moody contrast' },
-        { key: 'cyberpunk', label: 'Cyberpunk', desc: 'Neon sci-fi city vibe (controlled)' },
-        { key: 'vaporwave', label: 'Vaporwave', desc: 'Retro-futuristic gradients + glow' },
-        { key: 'oil', label: 'Oil Painting', desc: 'Classic oil paint strokes' },
-        { key: 'watercolor', label: 'Watercolor', desc: 'Soft watercolor wash, paper texture' },
-        { key: 'pencil', label: 'Pencil Sketch', desc: 'Graphite sketch / cross-hatching' },
-        { key: 'ink', label: 'Ink Wash', desc: 'Ink wash + brush texture' },
-        { key: 'lowpoly', label: 'Low Poly', desc: 'Low-poly geometric 3D' },
-      ] as const,
+  const PHOTO_STYLE_OPTIONS: PhotoStyleOption[] = useMemo(
+    () => [
+      { key: 'storybook', label: 'Storybook', desc: "Hand-drawn, kids-book watercolor (default vibe)" },
+      { key: 'modern', label: 'Modern', desc: 'Clean, minimal, editorial illustration' },
+      { key: 'realistic', label: 'Realistic', desc: 'Photoreal look (natural light)' },
+      { key: 'cinematic', label: 'Cinematic', desc: 'Dramatic lighting, depth, movie still' },
+      { key: 'anime', label: 'Anime', desc: 'Anime illustration, clean lines, soft shading' },
+      { key: 'comic', label: 'Comic', desc: 'Comic book / inked outlines, punchy shadows' },
+      { key: 'pixel', label: 'Pixel', desc: 'Pixel art, retro game style' },
+      { key: 'isometric', label: 'Isometric', desc: 'Isometric world / diorama' },
+      { key: 'clay', label: 'Clay', desc: 'Claymation / soft 3D clay look' },
+      { key: '3d', label: '3D Render', desc: 'Tasteful 3D render (not plastic)' },
+      { key: 'noir', label: 'Noir', desc: 'Black & white noir, moody contrast' },
+      { key: 'cyberpunk', label: 'Cyberpunk', desc: 'Neon sci-fi city vibe (controlled)' },
+      { key: 'vaporwave', label: 'Vaporwave', desc: 'Retro-futuristic gradients + glow' },
+      { key: 'oil', label: 'Oil Painting', desc: 'Classic oil paint strokes' },
+      { key: 'watercolor', label: 'Watercolor', desc: 'Soft watercolor wash, paper texture' },
+      { key: 'pencil', label: 'Pencil Sketch', desc: 'Graphite sketch / cross-hatching' },
+      { key: 'ink', label: 'Ink Wash', desc: 'Ink wash + brush texture' },
+      { key: 'lowpoly', label: 'Low Poly', desc: 'Low-poly geometric 3D' },
+    ],
     []
   )
 
@@ -503,9 +553,6 @@ export default function App() {
     return () => clearTimeout(t)
   }, [tipOpen, tipStage])
 
-  // ==========================================================================
-  // BOOT
-  // ==========================================================================
   useEffect(() => {
     let cancelled = false
 
@@ -599,10 +646,6 @@ export default function App() {
     void load()
   }, [identity.address, miniLoaded])
 
-  // ==========================================================================
-  // RESUMABLE TX VERIFY
-  // ==========================================================================
-
   function savePendingTx(txHash: string, addr: string) {
     try {
       localStorage.setItem(
@@ -647,8 +690,6 @@ export default function App() {
     let softNoticeShown = false
 
     try {
-      // Try for ~3 minutes (72 polls × 2.5s), then stop the visible "verifying"
-      // indicator but still keep checking silently on next app open.
       let attempts = 0
       const maxVisibleAttempts = 72
 
@@ -682,11 +723,7 @@ export default function App() {
           toast.message('Still confirming onchain. You can close the app — credit will be added automatically.')
         }
 
-        if (attempts >= maxVisibleAttempts) {
-          // Give up the visible spinner but don't clear storage — next app open
-          // will resume.
-          return
-        }
+        if (attempts >= maxVisibleAttempts) return
 
         await new Promise((r) => setTimeout(r, pollMs))
       }
@@ -1069,8 +1106,6 @@ export default function App() {
       }
 
       savePendingTx(txHash, addr)
-
-      // Transition from "submitting" -> "verifying" phase
       setSubmittingCredit(false)
       await verifyCreditTxInBackground({ address: addr }, txHash)
     } catch (e: any) {
@@ -1227,8 +1262,16 @@ export default function App() {
 
   const creditsLabel = credits === null ? '—' : String(credits)
   const creditBusy = submittingCredit || verifyingCredit
-  const creditIdleText = walletConnected ? 'Get Credit' : 'Get Credit'
   const creditLoadingText = submittingCredit ? 'Confirm in wallet' : 'Verifying tx'
+
+  // Stable handlers for the memoized BasepostHeader, to avoid re-renders.
+  const openPhotoStyle = React.useCallback(() => setPhotoStyleOpen(true), [])
+  const triggerGeneratePhoto = React.useCallback(() => {
+    void onGeneratePhoto()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result, credits, photoStylePreset, identity.address, capabilities, miniClient, isInMiniApp, selectedWalletId])
+
+  const photoDisabled = !result || generating || posting || generatingImage
 
   if (!miniLoaded) {
     return (
@@ -1344,7 +1387,7 @@ export default function App() {
                         <LoadingLabel
                           active={creditBusy}
                           estimateSec={submittingCredit ? 20 : 45}
-                          idleText={creditIdleText}
+                          idleText="Get Credit"
                           icon={<Wallet className="h-4 w-4" />}
                           loadingText={creditLoadingText}
                         />
@@ -1379,50 +1422,17 @@ export default function App() {
                 </CardContent>
               </Card>
 
-              {/* Basepost card — kept structurally identical to the top card to kill
-                  the render flicker we saw in Base app. No conditional-layout
-                  branches (all sub-blocks are always rendered, just shown/hidden
-                  via a stable min-height wrapper). */}
               <Card className="mt-6">
                 <CardHeader className="pb-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Basepost</div>
-                      <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-                        Photo style: <span className="font-semibold text-zinc-900 dark:text-zinc-100">{photoStyleLabel}</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 shrink-0 -mt-0.5">
-                      <button
-                        onClick={() => setPhotoStyleOpen(true)}
-                        className="rounded-2xl p-2 text-zinc-700 transition hover:bg-zinc-100 active:scale-[0.98] dark:text-zinc-200 dark:hover:bg-zinc-900"
-                        aria-label="Choose photo style"
-                        title="Choose photo style"
-                      >
-                        <Palette className="h-7 w-7 lb-rainbow" />
-                      </button>
-
-                      <Button
-                        variant={result ? 'success' : 'attention'}
-                        isLoading={false}
-                        disabled={!result || generating || posting || generatingImage}
-                        onClick={() => void onGeneratePhoto()}
-                        className="px-5 py-2.5 text-sm"
-                      >
-                        <LoadingLabel
-                          active={generatingImage}
-                          estimateSec={35}
-                          idleText="Generate Photo (-5c)"
-                          icon={<ImageIcon className="h-4 w-4" />}
-                        />
-                      </Button>
-                    </div>
-                  </div>
+                  <BasepostHeader
+                    photoStyleLabel={photoStyleLabel}
+                    generatingImage={generatingImage}
+                    photoDisabled={photoDisabled}
+                    onOpenStyle={openPhotoStyle}
+                    onGeneratePhoto={triggerGeneratePhoto}
+                  />
                 </CardHeader>
                 <CardContent>
-                  {/* Stable result area with fixed min-height so toggling
-                      generating/result/empty never changes card size */}
                   <div style={{ minHeight: 120 }}>
                     {generatingImage ? (
                       <div className="mb-3">
@@ -1500,13 +1510,6 @@ export default function App() {
                       Copy
                     </Button>
                   </div>
-
-                  {/* REMOVED: the "Connect your wallet to keep credits tied to you"
-                      yellow warning box. It was the main source of the nicher-card
-                      blink — it mounts/unmounts when `identity.address` toggles,
-                      and Base app's webview triggers that toggle on every focus /
-                      visibility event. The top card already has a "Connect Wallet"
-                      button, so this warning box was redundant. */}
                 </CardContent>
               </Card>
 
