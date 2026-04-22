@@ -258,9 +258,6 @@ export async function hapticImpact(capabilities: string[], style: 'light' | 'med
  * Twitter / X share — opens the native X app on mobile (via intent / universal
  * link), or the web composer on desktop. Works in Base app, Trust wallet,
  * Bitget wallet, MetaMask mobile, and regular browsers on all platforms.
- *
- * - Mobile: the OS will offer "X" / "II·X" (clone) app chooser
- * - Desktop: opens https://twitter.com/intent/tweet?... in a new tab
  */
 export function shareToTwitter(args: { text: string; url?: string }) {
   const text = String(args.text || '').trim()
@@ -270,18 +267,13 @@ export function shareToTwitter(args: { text: string; url?: string }) {
   if (text) intent.searchParams.set('text', text)
   if (url) intent.searchParams.set('url', url)
 
-  // On mobile, using location.href gives the OS a chance to open the X app
-  // via Android intent / iOS universal link. window.open() in a miniapp
-  // webview often silently does nothing.
   const ua = String(navigator.userAgent || '').toLowerCase()
   const isMobile = /android|iphone|ipad|ipod|mobile/.test(ua)
 
   try {
     if (isMobile) {
-      // Try opening in a new window first (desktop browsers + some webviews)
       const w = window.open(intent.toString(), '_blank', 'noopener,noreferrer')
       if (!w) {
-        // Fallback — navigate current window. The OS will show the app chooser.
         window.location.href = intent.toString()
       }
     } else {
@@ -292,11 +284,6 @@ export function shareToTwitter(args: { text: string; url?: string }) {
   }
 }
 
-/**
- * Kept for backward compatibility with share-for-credits flow. This still
- * uses Farcaster composer because that flow is explicitly "share on
- * Farcaster for a bonus". Regular "Post Directly" now uses shareToTwitter.
- */
 function buildComposeIntent(args: { text: string; embeds?: string[]; channelKey?: string }) {
   const url = new URL('https://farcaster.xyz/~/compose')
   if (args.text) url.searchParams.set('text', args.text)
@@ -372,7 +359,7 @@ export async function getEthereumProvider(preferredId?: string, opts: { isInMini
   const preferred = wallets.find((w) => w.id === preferredId)
   if (preferred?.provider) return preferred.provider
   if (wallets[0]?.provider) return wallets[0].provider
-  throw new Error('No wallet provider found. Open in a wallet-enabled browser or use the Base / Farcaster app.')
+  throw new Error('No wallet provider found. Open in a wallet-enabled browser or use the Base / Trust / Bitget app.')
 }
 
 export async function connectWalletProvider(option: WalletOption, _opts: { isInMiniApp?: boolean; client?: any } = {}) {
