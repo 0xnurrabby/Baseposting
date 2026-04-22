@@ -9,7 +9,6 @@ import { Skeleton } from '@/components/Skeleton'
 import { cn } from '@/lib/cn'
 import {
   apiLeaderboard,
-  apiGetRewardAddress,
   apiSetRewardAddress,
   type Identity,
   type LeaderboardPeriod,
@@ -17,23 +16,53 @@ import {
 } from '@/lib/api'
 
 function shortAddress(addr: string) {
+  if (!addr) return ''
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`
 }
 
-function safeName(row: LeaderboardRow) {
-  const dn = String(row.displayName || '').trim()
-  const un = String(row.username || '').trim()
-  if (dn) return dn
-  if (un) return `@${un}`
-  if (row.fid != null) return `fid:${row.fid}`
-  return row.userId
+// Primary display: prefer the submitted reward address, then fall back to the
+// userId parsed address. We NEVER show fid/username/pfp from Farcaster anymore.
+function rowDisplayAddress(row: LeaderboardRow): string {
+  const fromReward = String(row.baseAddress || '').trim()
+  if (/^0x[a-fA-F0-9]{40}$/.test(fromReward)) return fromReward
+
+  // userId shape: "addr:0xABC…" or "fid:1234"
+  const uid = String(row.userId || '')
+  if (uid.startsWith('addr:')) {
+    const a = uid.slice(5)
+    if (/^0x[a-fA-F0-9]{40}$/.test(a)) return a
+  }
+  return ''
 }
 
-function safeHandle(row: LeaderboardRow) {
-  const un = String(row.username || '').trim()
-  if (un) return `@${un}`
-  if (row.fid != null) return `fid:${row.fid}`
-  return ''
+function rowLabel(row: LeaderboardRow): string {
+  const addr = rowDisplayAddress(row)
+  if (addr) return shortAddress(addr)
+  // Legacy rows that only had a fid and never submitted an address:
+  if (row.fid != null) return `User #${row.fid}`
+  return row.userId || 'Anonymous'
+}
+
+// Stable pastel color from an address/string so every row gets its own avatar.
+function colorFromString(s: string) {
+  let hash = 0
+  for (let i = 0; i < s.length; i++) hash = (hash << 5) - hash + s.charCodeAt(i)
+  const h = Math.abs(hash) % 360
+  return `hsl(${h} 70% 55%)`
+}
+
+function AddressAvatar(props: { seed: string; size?: number; label?: string }) {
+  const size = props.size ?? 40
+  const bg = colorFromString(props.seed || 'anon')
+  const initial = (props.label || props.seed || '?').replace(/^0x/i, '').slice(0, 2).toUpperCase()
+  return (
+    <div
+      className="flex items-center justify-center overflow-hidden rounded-2xl text-xs font-bold text-white"
+      style={{ width: size, height: size, background: bg }}
+    >
+      {initial}
+    </div>
+  )
 }
 
 function formatRewardUsd(amount: number) {
@@ -44,7 +73,6 @@ function formatRewardUsd(amount: number) {
 }
 
 function rewardBadgeClasses(rank: number) {
-  // 1st/2nd/3rd all different; rest winners one consistent color
   if (rank === 1) return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200'
   if (rank === 2) return 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900 dark:bg-violet-950/40 dark:text-violet-200'
   if (rank === 3) return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200'
@@ -79,15 +107,15 @@ export function LeaderboardPage(props: {
   const [entries, setEntries] = useState<LeaderboardRow[]>([])
   const [meta, setMeta] = useState<any>({})
 
-  // Reward address UX
+  // Reward address UX (wallet-based now)
   const [myAddr, setMyAddr] = useState<string | null>(null)
   const [addrOpen, setAddrOpen] = useState(false)
   const [addrInput, setAddrInput] = useState('')
   const [savingAddr, setSavingAddr] = useState(false)
 
-  const fid = props.identity.fid
-
-  const canSubmitAddr = typeof fid === 'number' && Number.isFinite(fid)
+  // We allow any wallet-connected user to submit a reward address.
+  const connectedAddr = String(props.identity.address || '').trim().toLowerCase()
+  const canSubmitAddr = Boolean(connectedAddr)
 
   async function loadLeaderboard(p: LeaderboardPeriod) {
     setLoading(true)
@@ -104,29 +132,25 @@ export function LeaderboardPage(props: {
     }
   }
 
-  async function loadMyAddress() {
-    if (!canSubmitAddr || !fid) return
-    try {
-      const data = await apiGetRewardAddress(fid)
-      setMyAddr(data.baseAddress || null)
-      if (data.baseAddress) setAddrInput(data.baseAddress)
-    } catch {
-      // ignore
+  // Try to resolve "my reward address" from the already-loaded entries (by
+  // matching userId = addr:<lowercase>).
+  useEffect(() => {
+    if (!connectedAddr) {
+      setMyAddr(null)
+      return
     }
-  }
+    const mine = entries.find((r) => String(r.userId || '').toLowerCase() === `addr:${connectedAddr}`)
+    const saved = mine?.baseAddress || null
+    setMyAddr(saved || null)
+    if (saved) setAddrInput(saved)
+  }, [entries, connectedAddr])
 
   useEffect(() => {
     void loadLeaderboard(period)
-    // Auto-refresh every 60s so UI stays fresh while the cron runs every 10 min.
     const t = setInterval(() => void loadLeaderboard(period), 60_000)
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period])
-
-  useEffect(() => {
-    void loadMyAddress()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fid])
 
   const updatedLabel = useMemo(() => {
     const v = String(meta?.updatedAt || '').trim()
@@ -141,7 +165,6 @@ export function LeaderboardPage(props: {
   }, [meta])
 
   const top3 = entries.slice(0, 3)
-  const rest = entries.slice(3)
 
   const addrCtaVariant = myAddr ? 'success' : 'attention'
   const addrCtaText = myAddr ? 'Base address submitted ✅' : 'Submit Base address for reward'
@@ -154,7 +177,7 @@ export function LeaderboardPage(props: {
     }
 
     if (!canSubmitAddr) {
-      toast.error('Open inside Farcaster / Base Mini App to submit')
+      toast.error('Connect your wallet first')
       return
     }
 
@@ -165,10 +188,12 @@ export function LeaderboardPage(props: {
       setAddrOpen(false)
       toast.success('Address saved')
 
-      // Update any visible row instantly
+      // Update the visible row for our wallet (if present) instantly.
       setEntries((prev) =>
         prev.map((r) => {
-          if (r.fid && fid && r.fid === fid) return { ...r, baseAddress: value }
+          if (String(r.userId || '').toLowerCase() === `addr:${connectedAddr}`) {
+            return { ...r, baseAddress: value }
+          }
           return r
         })
       )
@@ -260,11 +285,11 @@ export function LeaderboardPage(props: {
             disabled={!canSubmitAddr}
             onClick={() => {
               if (!canSubmitAddr) {
-                toast.message('Open inside Farcaster / Base Mini App to submit')
+                toast.message('Connect your wallet first')
                 return
               }
               setAddrOpen(true)
-              setAddrInput((myAddr || '').trim())
+              setAddrInput((myAddr || connectedAddr || '').trim())
             }}
           >
             {addrCtaText}
@@ -292,55 +317,59 @@ export function LeaderboardPage(props: {
             <div className="text-sm text-zinc-600 dark:text-zinc-300">No data yet. Generate a post or photo to enter the leaderboard.</div>
           ) : (
             <div className="grid gap-3 sm:grid-cols-3">
-              {top3.map((r, idx) => (
-                <motion.div
-                  key={`${r.userId}:${idx}`}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.18, delay: idx * 0.04 }}
-                  className="rounded-2xl border border-zinc-200 bg-white/70 p-4 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/50"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="relative">
-                      <div className="h-10 w-10 overflow-hidden rounded-2xl bg-zinc-200 dark:bg-zinc-800">
-                        {r.pfpUrl ? <img src={r.pfpUrl} alt="" className="h-full w-full object-cover" /> : null}
+              {top3.map((r, idx) => {
+                const label = rowLabel(r)
+                const addr = rowDisplayAddress(r)
+                return (
+                  <motion.div
+                    key={`${r.userId}:${idx}`}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.18, delay: idx * 0.04 }}
+                    className="rounded-2xl border border-zinc-200 bg-white/70 p-4 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/50"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="relative">
+                        <AddressAvatar seed={addr || r.userId || label} label={addr || label} />
+                        <div className="absolute -bottom-2 -right-2 rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-xs font-bold text-zinc-900 shadow-sm dark:border-zinc-800 dark:bg-zinc-950 dark:text-white">
+                          #{idx + 1}
+                        </div>
                       </div>
-                      <div className="absolute -bottom-2 -right-2 rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-xs font-bold text-zinc-900 shadow-sm dark:border-zinc-800 dark:bg-zinc-950 dark:text-white">
-                        #{idx + 1}
+
+                      <div className="min-w-0">
+                        <div className="flex min-w-0 items-center">
+                          <div className="truncate font-mono text-sm font-semibold text-zinc-900 dark:text-white">{label}</div>
+                          <RewardBadge rank={idx + 1} rewardUsd={r.rewardUsd} />
+                        </div>
+                        <div className="truncate text-xs text-zinc-600 dark:text-zinc-400">
+                          {r.postCount} posts • {r.photoCount} photos
+                        </div>
                       </div>
                     </div>
 
-                    <div className="min-w-0">
-                      <div className="flex min-w-0 items-center">
-                        <div className="truncate text-sm font-semibold text-zinc-900 dark:text-white">{safeName(r)}</div>
-                        <RewardBadge rank={idx + 1} rewardUsd={r.rewardUsd} />
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                      <div className="rounded-xl bg-zinc-50 px-2 py-2 text-center dark:bg-zinc-900">
+                        <div className="font-bold text-zinc-900 dark:text-white">{r.creditsSpent}</div>
+                        <div className="text-zinc-500 dark:text-zinc-400">spent</div>
                       </div>
-                      <div className="truncate text-xs text-zinc-600 dark:text-zinc-400">{safeHandle(r)}</div>
+                      <div className="rounded-xl bg-zinc-50 px-2 py-2 text-center dark:bg-zinc-900">
+                        <div className="font-bold text-zinc-900 dark:text-white">{r.postCount}</div>
+                        <div className="text-zinc-500 dark:text-zinc-400">posts</div>
+                      </div>
+                      <div className="rounded-xl bg-zinc-50 px-2 py-2 text-center dark:bg-zinc-900">
+                        <div className="font-bold text-zinc-900 dark:text-white">{r.photoCount}</div>
+                        <div className="text-zinc-500 dark:text-zinc-400">photos</div>
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                    <div className="rounded-xl bg-zinc-50 px-2 py-2 text-center dark:bg-zinc-900">
-                      <div className="font-bold text-zinc-900 dark:text-white">{r.creditsSpent}</div>
-                      <div className="text-zinc-500 dark:text-zinc-400">spent</div>
-                    </div>
-                    <div className="rounded-xl bg-zinc-50 px-2 py-2 text-center dark:bg-zinc-900">
-                      <div className="font-bold text-zinc-900 dark:text-white">{r.postCount}</div>
-                      <div className="text-zinc-500 dark:text-zinc-400">posts</div>
-                    </div>
-                    <div className="rounded-xl bg-zinc-50 px-2 py-2 text-center dark:bg-zinc-900">
-                      <div className="font-bold text-zinc-900 dark:text-white">{r.photoCount}</div>
-                      <div className="text-zinc-500 dark:text-zinc-400">photos</div>
-                    </div>
-                  </div>
-
-                  {r.baseAddress ? (
-                    <div className="mt-3 text-xs text-zinc-600 dark:text-zinc-400">
-                      Reward: <span className="font-semibold text-zinc-900 dark:text-zinc-200">{shortAddress(r.baseAddress)}</span>
-                    </div>
-                  ) : null}
-                </motion.div>
-              ))}
+                    {r.baseAddress && r.baseAddress !== addr ? (
+                      <div className="mt-3 text-xs text-zinc-600 dark:text-zinc-400">
+                        Reward: <span className="font-semibold text-zinc-900 dark:text-zinc-200">{shortAddress(r.baseAddress)}</span>
+                      </div>
+                    ) : null}
+                  </motion.div>
+                )
+              })}
             </div>
           )}
         </CardContent>
@@ -361,34 +390,38 @@ export function LeaderboardPage(props: {
             </div>
           ) : (
             <div className="space-y-2">
-              {entries.map((r, idx) => (
-                <div
-                  key={`${r.userId}:${idx}`}
-                  className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-white/70 px-3 py-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/50"
-                >
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="w-7 text-center text-sm font-bold text-zinc-900 dark:text-white">{idx + 1}</div>
-                    <div className="h-10 w-10 overflow-hidden rounded-2xl bg-zinc-200 dark:bg-zinc-800">
-                      {r.pfpUrl ? <img src={r.pfpUrl} alt="" className="h-full w-full object-cover" /> : null}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex min-w-0 items-center">
-                        <div className="truncate text-sm font-semibold text-zinc-900 dark:text-white">{safeName(r)}</div>
-                        <RewardBadge rank={idx + 1} rewardUsd={r.rewardUsd} />
+              {entries.map((r, idx) => {
+                const label = rowLabel(r)
+                const addr = rowDisplayAddress(r)
+                return (
+                  <div
+                    key={`${r.userId}:${idx}`}
+                    className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-white/70 px-3 py-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/50"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="w-7 text-center text-sm font-bold text-zinc-900 dark:text-white">{idx + 1}</div>
+                      <AddressAvatar seed={addr || r.userId || label} label={addr || label} />
+                      <div className="min-w-0">
+                        <div className="flex min-w-0 items-center">
+                          <div className="truncate font-mono text-sm font-semibold text-zinc-900 dark:text-white">{label}</div>
+                          <RewardBadge rank={idx + 1} rewardUsd={r.rewardUsd} />
+                        </div>
+                        <div className="truncate text-xs text-zinc-600 dark:text-zinc-400">
+                          {r.postCount} posts • {r.photoCount} photos
+                          {r.baseAddress && r.baseAddress !== addr ? (
+                            <span className="ml-2">• reward: {shortAddress(r.baseAddress)}</span>
+                          ) : null}
+                        </div>
                       </div>
-                      <div className="truncate text-xs text-zinc-600 dark:text-zinc-400">
-                        {r.postCount} posts • {r.photoCount} photos
-                        {r.baseAddress ? <span className="ml-2">• {shortAddress(r.baseAddress)}</span> : null}
-                      </div>
                     </div>
-                  </div>
 
-                  <div className="shrink-0 text-right">
-                    <div className="text-sm font-bold text-zinc-900 dark:text-white">{r.creditsSpent}c</div>
-                    <div className="text-xs text-zinc-600 dark:text-zinc-400">spent</div>
+                    <div className="shrink-0 text-right">
+                      <div className="text-sm font-bold text-zinc-900 dark:text-white">{r.creditsSpent}c</div>
+                      <div className="text-xs text-zinc-600 dark:text-zinc-400">spent</div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </CardContent>
