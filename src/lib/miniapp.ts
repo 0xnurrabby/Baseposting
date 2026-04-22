@@ -61,10 +61,12 @@ function normalizeWalletName(provider: any, fallback = 'Browser Wallet', detail?
   if (infoLower.includes('metamask')) return 'MetaMask'
   if (infoLower.includes('coinbase') || infoLower.includes('base wallet')) return 'Coinbase Wallet'
   if (infoLower.includes('trust')) return 'Trust Wallet'
+  if (infoLower.includes('bitget')) return 'Bitget Wallet'
   if (infoLower.includes('brave')) return 'Brave Wallet'
   if (infoName) return infoName
 
   if (provider?.isTrust || provider?.isTrustWallet) return 'Trust Wallet'
+  if (provider?.isBitKeep || provider?.isBitgetWallet) return 'Bitget Wallet'
   if (provider?.isRabby) return 'Rabby Wallet'
   if (provider?.isOKXWallet || provider?.okxwallet) return 'OKX Wallet'
   if (provider?.isMetaMask) return 'MetaMask'
@@ -82,6 +84,7 @@ function walletPriority(name: string, rdns = '') {
   if (hay.includes('metamask')) return 94
   if (hay.includes('rabby')) return 92
   if (hay.includes('okx')) return 90
+  if (hay.includes('bitget') || hay.includes('bitkeep')) return 88
   if (hay.includes('brave')) return 84
   return 60
 }
@@ -93,6 +96,7 @@ function providerFingerprint(provider: any, name = '') {
     provider?.isCoinbaseWallet ? 'coinbase' : '',
     provider?.isTrust || provider?.isTrustWallet ? 'trust' : '',
     provider?.isOKXWallet || provider?.okxwallet ? 'okx' : '',
+    provider?.isBitKeep || provider?.isBitgetWallet ? 'bitget' : '',
     provider?.isBraveWallet ? 'brave' : '',
   ].filter(Boolean).join('|')
   return [
@@ -169,6 +173,7 @@ function getLegacyInjectedWallets(existing: WalletOption[] = []): WalletOption[]
     ...(Array.isArray(anyWin?.ethereum?.providers) ? anyWin.ethereum.providers : []),
     anyWin?.okxwallet,
     anyWin?.trustwallet,
+    anyWin?.bitkeep?.ethereum,
     anyWin?.coinbaseWalletExtension,
   ].filter(Boolean)
 
@@ -249,6 +254,49 @@ export async function hapticImpact(capabilities: string[], style: 'light' | 'med
   }
 }
 
+/**
+ * Twitter / X share — opens the native X app on mobile (via intent / universal
+ * link), or the web composer on desktop. Works in Base app, Trust wallet,
+ * Bitget wallet, MetaMask mobile, and regular browsers on all platforms.
+ *
+ * - Mobile: the OS will offer "X" / "II·X" (clone) app chooser
+ * - Desktop: opens https://twitter.com/intent/tweet?... in a new tab
+ */
+export function shareToTwitter(args: { text: string; url?: string }) {
+  const text = String(args.text || '').trim()
+  const url = String(args.url || '').trim()
+
+  const intent = new URL('https://twitter.com/intent/tweet')
+  if (text) intent.searchParams.set('text', text)
+  if (url) intent.searchParams.set('url', url)
+
+  // On mobile, using location.href gives the OS a chance to open the X app
+  // via Android intent / iOS universal link. window.open() in a miniapp
+  // webview often silently does nothing.
+  const ua = String(navigator.userAgent || '').toLowerCase()
+  const isMobile = /android|iphone|ipad|ipod|mobile/.test(ua)
+
+  try {
+    if (isMobile) {
+      // Try opening in a new window first (desktop browsers + some webviews)
+      const w = window.open(intent.toString(), '_blank', 'noopener,noreferrer')
+      if (!w) {
+        // Fallback — navigate current window. The OS will show the app chooser.
+        window.location.href = intent.toString()
+      }
+    } else {
+      window.open(intent.toString(), '_blank', 'noopener,noreferrer')
+    }
+  } catch {
+    window.location.href = intent.toString()
+  }
+}
+
+/**
+ * Kept for backward compatibility with share-for-credits flow. This still
+ * uses Farcaster composer because that flow is explicitly "share on
+ * Farcaster for a bonus". Regular "Post Directly" now uses shareToTwitter.
+ */
 function buildComposeIntent(args: { text: string; embeds?: string[]; channelKey?: string }) {
   const url = new URL('https://farcaster.xyz/~/compose')
   if (args.text) url.searchParams.set('text', args.text)
