@@ -1,30 +1,9 @@
-export const runtime = 'edge'
 export const maxDuration = 30
 
+import crypto from 'node:crypto'
 import { adjustCredits, getOrCreateUser, incrementMetric, getRecent, pushRecent } from './_lib/store.js'
 import { logCreditSpend } from './_lib/leaderboard.js'
-
-// ============================================================
-// EDGE-COMPATIBLE HELPERS (no Node APIs allowed in Edge runtime)
-// ============================================================
-
-const ALLOWED_ORIGINS = new Set([
-  'https://baseposting.online',
-  'http://localhost:5173',
-  'https://warpcast.com',
-  'https://app.base.org',
-])
-
-function corsHeaders(origin: string) {
-  const allow = !origin || origin === 'null' || ALLOWED_ORIGINS.has(origin) || /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin) || origin.startsWith('http://localhost:')
-  return {
-    'Access-Control-Allow-Origin': allow && origin && origin !== 'null' ? origin : '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Access-Control-Max-Age': '86400',
-    'Vary': 'Origin',
-  }
-}
+import { handleOptions, json, readJson, requirePost, setCors } from './_lib/http.js'
 
 function toUserId(body: any) {
   const fid = body?.fid
@@ -108,17 +87,14 @@ const TOPIC_TAGS: Array<{ tag: string; keywords: string[] }> = [
 
 const BANNED_OPENERS = ['gm', 'hot take', 'unpopular opinion', "here's the thing", "let's talk about", 'thread']
 
-// ============================================================
-// APIFY — keep cache LONG + pre-warm at module load
-// ============================================================
-
-const APIFY_CACHE_TTL_MS = 1000 * 60 * 15 // 15 min
+// Apify cache — LONG TTL + pre-warm
+const APIFY_CACHE_TTL_MS = 1000 * 60 * 15
 let apifyCache: { ts: number; items: any[] } | null = null
 let apifyPrewarmPromise: Promise<any[]> | null = null
 
 async function fetchApifyPostsInner(limit: number): Promise<any[]> {
-  const datasetId = (globalThis as any).process?.env?.APIFY_DATASET_ID
-  const token = (globalThis as any).process?.env?.APIFY_TOKEN
+  const datasetId = process.env.APIFY_DATASET_ID
+  const token = process.env.APIFY_TOKEN
   if (!datasetId || !token) return []
 
   const controller = new AbortController()
@@ -143,9 +119,7 @@ async function fetchApifyPosts(limit: number): Promise<any[]> {
     try {
       await apifyPrewarmPromise
       if (apifyCache && apifyCache.items.length) return apifyCache.items.slice(0, limit)
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
   }
   try {
     const arr = await fetchApifyPostsInner(limit)
@@ -157,19 +131,13 @@ async function fetchApifyPosts(limit: number): Promise<any[]> {
   }
 }
 
-// Pre-warm: fires on first module load per edge instance.
+// Pre-warm at module load
 try {
   apifyPrewarmPromise = fetchApifyPostsInner(60).then((arr) => {
     apifyCache = { ts: Date.now(), items: arr }
     return arr
   }).catch(() => [])
-} catch {
-  // ignore
-}
-
-// ============================================================
-// STYLE / TOPIC PICKING (pure JS, fast)
-// ============================================================
+} catch { /* ignore */ }
 
 function weightedPick<T extends { weight: number }>(items: T[], penalize: Set<string>, idKey: (x: T) => string): T {
   const weights = items.map((s) => (penalize.has(idKey(s)) ? s.weight * 0.2 : s.weight))
@@ -220,10 +188,6 @@ function pickSourcePosts(posts: Array<{ author: string; text: string }>, topicTa
   return picked
 }
 
-// ============================================================
-// TEXT POST-PROCESSING
-// ============================================================
-
 function clampChars(s: string, max: number) {
   const txt = String(s || '').trim()
   if (txt.length <= max) return txt
@@ -253,21 +217,39 @@ function ensureBaseMention(text: string): string {
   return text.trimEnd() + suffixes[Math.floor(Math.random() * suffixes.length)]
 }
 
-// ============================================================
-// OPENAI — STREAMING
-// ============================================================
+function fastLocalGenerate(args: { posts: Array<{ author: string; text: string }>; style: StyleDeck }): string {
+  const corpus = args.posts.map((p) => p.text).join(' ').toLowerCase()
+  const has = (words: string[]) => words.some((w) => corpus.includes(w))
+  let cue = 'shipping without overthinking every step'
+  if (has(['fee', 'fees', 'gas', 'cheap'])) cue = 'low fees'
+  else if (has(['fast', 'faster', 'latency', 'finality'])) cue = 'fast feedback loops'
+  else if (has(['ship', 'builder', 'build'])) cue = 'shipping small things quickly'
+  else if (has(['farcaster', 'cast', 'social'])) cue = 'onchain posts that feel native'
+  else if (has(['wallet', 'onboard'])) cue = 'getting people onchain without drama'
+  else if (has(['defi', 'swap', 'liquidity'])) cue = 'moving capital without extra friction'
 
-async function openaiStreamCompletion(args: {
+  const lines = [
+    `What actually works on Base: ${cue}.`,
+    'The small experiments finally feel worth doing.',
+    'Nothing fancy, just less friction 💙',
+  ]
+  return clampChars(lines.join('\n'), args.style.maxChars)
+}
+
+// ============================================================
+// OpenAI streaming call — returns the raw fetch Response
+// ============================================================
+async function openaiStreamResponse(args: {
   posts: Array<{ author: string; text: string }>
   style: StyleDeck
   topicTag: string
   recentTexts: string[]
   extraPrompt: string
-}): Promise<ReadableStream<Uint8Array> | null> {
-  const apiKey = (globalThis as any).process?.env?.OPENAI_API_KEY
+}): Promise<Response | null> {
+  const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) return null
 
-  const model = (globalThis as any).process?.env?.OPENAI_MODEL || 'gpt-4o-mini'
+  const model = process.env.OPENAI_MODEL || 'gpt-4o-mini'
   const style = args.style
   const angle = style.anglePrompts[Math.floor(Math.random() * style.anglePrompts.length)]
   const seed = crypto.randomUUID()
@@ -328,11 +310,11 @@ async function openaiStreamCompletion(args: {
     presence_penalty: 0.7,
     frequency_penalty: 0.35,
     max_tokens: style.maxTokens,
-    stream: true, // ⚡ STREAMING ENABLED
+    stream: true,
   }
 
   const controller = new AbortController()
-  const t = setTimeout(() => controller.abort(), 12000)
+  const t = setTimeout(() => controller.abort(), 15000)
 
   try {
     const resp = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -349,84 +331,38 @@ async function openaiStreamCompletion(args: {
       clearTimeout(t)
       return null
     }
-
-    // Return the raw stream — the handler will parse it
-    // DO NOT clear timeout yet — it'll clear when the stream ends
-    return resp.body
+    // Don't clear timeout — it'll abort if the stream itself hangs
+    return resp
   } catch {
     clearTimeout(t)
     return null
   }
 }
 
-function fastLocalGenerate(args: { posts: Array<{ author: string; text: string }>; style: StyleDeck }): string {
-  const corpus = args.posts.map((p) => p.text).join(' ').toLowerCase()
-  const has = (words: string[]) => words.some((w) => corpus.includes(w))
-  let cue = 'shipping without overthinking every step'
-  if (has(['fee', 'fees', 'gas', 'cheap'])) cue = 'low fees'
-  else if (has(['fast', 'faster', 'latency', 'finality'])) cue = 'fast feedback loops'
-  else if (has(['ship', 'builder', 'build'])) cue = 'shipping small things quickly'
-  else if (has(['farcaster', 'cast', 'social'])) cue = 'onchain posts that feel native'
-  else if (has(['wallet', 'onboard'])) cue = 'getting people onchain without drama'
-  else if (has(['defi', 'swap', 'liquidity'])) cue = 'moving capital without extra friction'
-
-  const lines = [
-    `What actually works on Base: ${cue}.`,
-    'The small experiments finally feel worth doing.',
-    'Nothing fancy, just less friction 💙',
-  ]
-  return clampChars(lines.join('\n'), args.style.maxChars)
-}
-
-// ============================================================
-// HANDLER — streams the response back to frontend
-// ============================================================
-
-export default async function handler(req: Request): Promise<Response> {
-  const origin = req.headers.get('origin') || ''
-  const cors = corsHeaders(origin)
-
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { status: 204, headers: cors })
-  }
-
-  if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method Not Allowed' }), {
-      status: 405,
-      headers: { ...cors, 'Content-Type': 'application/json' },
-    })
-  }
+export default async function handler(req: any, res: any) {
+  setCors(req, res)
+  if (handleOptions(req, res)) return
+  if (!requirePost(req, res)) return
 
   let body: any = {}
   try {
-    body = await req.json()
+    body = await readJson(req)
   } catch {
-    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
-      status: 400,
-      headers: { ...cors, 'Content-Type': 'application/json' },
-    })
+    return json(res, 400, { error: 'Invalid JSON body' })
   }
 
   const userId = toUserId(body)
-  if (!userId) {
-    return new Response(JSON.stringify({ error: 'Missing user identity (fid or address)' }), {
-      status: 400,
-      headers: { ...cors, 'Content-Type': 'application/json' },
-    })
-  }
+  if (!userId) return json(res, 400, { error: 'Missing user identity (fid or address)' })
 
   const extraPrompt = String(body?.prompt || '').slice(0, 600)
   const limit = Math.max(1, Math.min(200, Number(body?.limit || 50)))
 
   const user = await getOrCreateUser(userId)
   if (user.credits < 3) {
-    return new Response(JSON.stringify({ error: 'Not enough credits (need 3)', credits: user.credits }), {
-      status: 402,
-      headers: { ...cors, 'Content-Type': 'application/json' },
-    })
+    return json(res, 402, { error: 'Not enough credits (need 3)', credits: user.credits })
   }
 
-  // ⚡ PARALLEL: fetch Apify + user recent simultaneously
+  // Parallel: Apify + user recent
   const [apifyItems, recent] = await Promise.all([
     fetchApifyPosts(limit),
     getRecent(userId, 'post', 12).catch(() => []),
@@ -449,108 +385,107 @@ export default async function handler(req: Request): Promise<Response> {
     12
   )
 
-  // Charge credits upfront (before streaming starts)
+  // Charge credits upfront
   const after = await adjustCredits(userId, -3)
 
-  // Fire background metrics (don't await)
+  // Fire background metrics
   Promise.all([
     incrementMetric(userId, 'postCount', 1, 2).catch(() => {}),
     logCreditSpend({ userId, creditsSpent: 3, postDelta: 1 }).catch(() => {}),
   ]).catch(() => {})
 
-  // Build the stream
-  const encoder = new TextEncoder()
-  const stream = new ReadableStream({
-    async start(controller) {
-      // Send metadata line first
-      controller.enqueue(encoder.encode(JSON.stringify({
-        type: 'meta',
-        credits: after.credits,
-        format: usedStyle.id,
-        topic: usedTopicTag,
-        sourceCount: posts.length,
-      }) + '\n'))
+  // --- STREAMING RESPONSE ---
+  // Set headers for streaming (Node.js http response)
+  res.statusCode = 200
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+  res.setHeader('Cache-Control', 'no-store, no-transform')
+  res.setHeader('X-Accel-Buffering', 'no')
 
-      // Start OpenAI stream
-      const openaiStream = await openaiStreamCompletion({
-        posts: chosenSources,
-        style: usedStyle,
-        topicTag: usedTopicTag,
-        recentTexts,
-        extraPrompt,
-      })
+  // Send metadata first
+  const metaLine = JSON.stringify({
+    type: 'meta',
+    credits: after.credits,
+    format: usedStyle.id,
+    topic: usedTopicTag,
+    sourceCount: posts.length,
+  }) + '\n'
+  res.write(metaLine)
 
-      let fullText = ''
+  let fullText = ''
 
-      if (!openaiStream) {
-        // Fallback: local generation
-        const localText = ensureBaseMention(fastLocalGenerate({ posts: chosenSources, style: usedStyle }))
-        fullText = localText
-        controller.enqueue(encoder.encode(JSON.stringify({ type: 'chunk', text: localText }) + '\n'))
-      } else {
-        // Parse SSE stream from OpenAI and forward chunks
-        const reader = openaiStream.getReader()
-        const decoder = new TextDecoder()
-        let buffer = ''
+  try {
+    const openaiResp = await openaiStreamResponse({
+      posts: chosenSources,
+      style: usedStyle,
+      topicTag: usedTopicTag,
+      recentTexts,
+      extraPrompt,
+    })
 
-        try {
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-            buffer += decoder.decode(value, { stream: true })
-            const lines = buffer.split('\n')
-            buffer = lines.pop() || ''
+    if (!openaiResp || !openaiResp.body) {
+      // Fallback: local generation
+      const localText = ensureBaseMention(fastLocalGenerate({ posts: chosenSources, style: usedStyle }))
+      fullText = localText
+      res.write(JSON.stringify({ type: 'chunk', text: localText }) + '\n')
+    } else {
+      // Stream OpenAI SSE → forward each delta as a JSON line to client
+      const reader = openaiResp.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
 
-            for (const line of lines) {
-              const trimmed = line.trim()
-              if (!trimmed || !trimmed.startsWith('data:')) continue
-              const data = trimmed.slice(5).trim()
-              if (data === '[DONE]') continue
-              try {
-                const parsed = JSON.parse(data)
-                const delta = parsed?.choices?.[0]?.delta?.content
-                if (typeof delta === 'string' && delta.length > 0) {
-                  fullText += delta
-                  controller.enqueue(encoder.encode(JSON.stringify({ type: 'chunk', text: delta }) + '\n'))
-                }
-              } catch {
-                // ignore malformed line
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
+
+          for (const line of lines) {
+            const trimmed = line.trim()
+            if (!trimmed || !trimmed.startsWith('data:')) continue
+            const data = trimmed.slice(5).trim()
+            if (data === '[DONE]') continue
+            try {
+              const parsed = JSON.parse(data)
+              const delta = parsed?.choices?.[0]?.delta?.content
+              if (typeof delta === 'string' && delta.length > 0) {
+                fullText += delta
+                res.write(JSON.stringify({ type: 'chunk', text: delta }) + '\n')
               }
+            } catch {
+              // ignore malformed line
             }
           }
-        } catch {
-          // stream error
-        } finally {
-          try { reader.releaseLock() } catch { /* ignore */ }
         }
+      } catch {
+        // stream error
+      } finally {
+        try { reader.releaseLock() } catch { /* ignore */ }
       }
+    }
+  } catch {
+    // Any unexpected error → fallback
+    if (!fullText) {
+      fullText = ensureBaseMention(fastLocalGenerate({ posts: chosenSources, style: usedStyle }))
+      res.write(JSON.stringify({ type: 'chunk', text: fullText }) + '\n')
+    }
+  }
 
-      // Final processing + ensure "Base" mentioned
-      let finalText = postProcessOutput(fullText || fastLocalGenerate({ posts: chosenSources, style: usedStyle }))
-      finalText = clampChars(finalText, usedStyle.maxChars)
-      finalText = ensureBaseMention(finalText)
+  // Post-process the full accumulated text
+  let finalText = postProcessOutput(fullText || fastLocalGenerate({ posts: chosenSources, style: usedStyle }))
+  finalText = clampChars(finalText, usedStyle.maxChars)
+  finalText = ensureBaseMention(finalText)
 
-      // If post-processing changed the text, send the final version
-      if (finalText !== fullText) {
-        controller.enqueue(encoder.encode(JSON.stringify({ type: 'final', text: finalText }) + '\n'))
-      } else {
-        controller.enqueue(encoder.encode(JSON.stringify({ type: 'done', text: finalText }) + '\n'))
-      }
+  // If post-processing changed the text, send the cleaned final
+  if (finalText !== fullText) {
+    res.write(JSON.stringify({ type: 'final', text: finalText }) + '\n')
+  } else {
+    res.write(JSON.stringify({ type: 'done', text: finalText }) + '\n')
+  }
 
-      // Fire-and-forget: save recent post for dedup
-      pushRecent(userId, 'post', { ts: Date.now(), styleId: usedStyle.id, topicTag: usedTopicTag, text: finalText }, 12).catch(() => {})
+  res.end()
 
-      controller.close()
-    },
-  })
-
-  return new Response(stream, {
-    status: 200,
-    headers: {
-      ...cors,
-      'Content-Type': 'text/plain; charset=utf-8',
-      'Cache-Control': 'no-store, no-transform',
-      'X-Accel-Buffering': 'no', // disable nginx buffering
-    },
-  })
+  // Fire-and-forget: save recent (after response already sent)
+  pushRecent(userId, 'post', { ts: Date.now(), styleId: usedStyle.id, topicTag: usedTopicTag, text: finalText }, 12).catch(() => {})
 }
