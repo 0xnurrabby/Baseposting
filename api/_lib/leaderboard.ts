@@ -156,12 +156,9 @@ async function getRewardAddressMap(redis: Redis): Promise<Record<string, string>
 }
 
 /**
- * Called when a wallet connects. If the same wallet previously used the app
- * via a Farcaster FID (and submitted their base address at that time), we
- * migrate their credits + leaderboard history + reward address from
- * `fid:N` → `addr:0x...`.
- *
- * Idempotent — safe to call on every /api/me.
+ * When a wallet connects, if we can find a legacy fid-based account with the
+ * SAME submitted reward address, merge credits + leaderboard stats into the
+ * new addr-based id. Idempotent.
  */
 export async function migrateFidToAddressIfPossible(address: string): Promise<{ migrated: boolean; fromFid?: number }> {
   const redis = getRedisClient()
@@ -174,8 +171,6 @@ export async function migrateFidToAddressIfPossible(address: string): Promise<{ 
   const newUserKey = `user:${newUserId}`
 
   try {
-    // Find legacy fid for this address (user must have submitted reward
-    // address while logged in with fid).
     const rewards = await getRewardAddressMap(redis)
     let legacyFidUserId: string | null = null
     for (const [uid, addr] of Object.entries(rewards)) {
@@ -188,13 +183,11 @@ export async function migrateFidToAddressIfPossible(address: string): Promise<{ 
 
     if (!legacyFidUserId) return { migrated: false }
 
-    // Skip if already migrated
     const migratedMark = await redis.hget(newUserKey, 'migratedFrom').catch(() => null)
     if (migratedMark && String(migratedMark) === legacyFidUserId) {
       return { migrated: false }
     }
 
-    // 1) Merge credits + counters
     const legacyUserKey = `user:${legacyFidUserId}`
     const legacyData = (await redis.hgetall<Record<string, string>>(legacyUserKey)) || {}
     const legacyCredits = Number(legacyData.credits || '0')
@@ -217,14 +210,13 @@ export async function migrateFidToAddressIfPossible(address: string): Promise<{ 
       updatedAt: now,
     })
 
-    // 2) Zero out legacy credits so they can't double-spend
     await redis.hset(legacyUserKey, {
       credits: '0',
       migratedTo: newUserId,
       updatedAt: now,
     })
 
-    // 3) Migrate 30 days of daily leaderboard entries
+    // Migrate 30 days of daily leaderboard entries
     const today = new Date()
     for (let i = 0; i < 30; i++) {
       const day = datePlusDays(today, -i)
@@ -246,7 +238,6 @@ export async function migrateFidToAddressIfPossible(address: string): Promise<{ 
       }
     }
 
-    // 4) Move reward address entry
     try {
       await redis.hset(REWARD_ADDR_HASH, { [newUserId]: addrLower })
       await redis.hdel(REWARD_ADDR_HASH, legacyFidUserId)
@@ -254,7 +245,6 @@ export async function migrateFidToAddressIfPossible(address: string): Promise<{ 
       // ignore
     }
 
-    // 5) Store fid->address hint
     const fid = parseFid(legacyFidUserId)
     if (fid != null) {
       try {
@@ -264,7 +254,7 @@ export async function migrateFidToAddressIfPossible(address: string): Promise<{ 
       }
     }
 
-    // 6) Invalidate leaderboard cache so new layout is rebuilt
+    // Invalidate cache so next read rebuilds with the new addr: entry
     try {
       await redis.del(LB_KEY_7D)
       await redis.del(LB_KEY_PREV)
@@ -386,7 +376,33 @@ export async function readLeaderboard(period: LeaderboardPeriod, forceFresh = fa
   if (!redis) return { entries: [], meta: { ok: false, error: 'Redis not configured' } }
 
   const key = period === 'prev' ? LB_KEY_PREV : LB_KEY_7D
-  await maybeRecomputeLeaderboards(redis, forceFresh)
+
+  // ALWAYS force a recompute if the cache is empty (e.g. after migration
+  // invalidated it). This prevents the "No data yet" issue where cache was
+  // cleared but never rebuilt.
+  let needRebuild = forceFresh
+  if (!needRebuild) {
+    try {
+      const cached = await redis.get<string | null>(key)
+      if (!cached) {
+        needRebuild = true
+      } else {
+        try {
+          const parsed = JSON.parse(cached)
+          if (!Array.isArray(parsed) || parsed.length === 0) {
+            // Empty cache — try a rebuild (maybe there IS data in the dailies)
+            needRebuild = true
+          }
+        } catch {
+          needRebuild = true
+        }
+      }
+    } catch {
+      needRebuild = true
+    }
+  }
+
+  await maybeRecomputeLeaderboards(redis, needRebuild)
 
   let entries: LeaderboardEntry[] = []
   try {
