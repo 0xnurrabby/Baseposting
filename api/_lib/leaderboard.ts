@@ -29,7 +29,7 @@ const DAILY_SPEND_PREFIX = 'daily:spend:'
 const DAILY_POST_PREFIX = 'daily:post:'
 const DAILY_PHOTO_PREFIX = 'daily:photo:'
 const REWARD_ADDR_HASH = 'reward:addresses'
-const FID_TO_ADDR_HASH = 'fid:to:address' // legacy-fid → address mapping
+const FID_TO_ADDR_HASH = 'fid:to:address'
 
 function parseFid(userId: string): number | null {
   if (!userId?.startsWith('fid:')) return null
@@ -155,25 +155,13 @@ async function getRewardAddressMap(redis: Redis): Promise<Record<string, string>
   }
 }
 
-async function getFidToAddressMap(redis: Redis): Promise<Record<string, string>> {
-  try {
-    const raw = await redis.hgetall<Record<string, string>>(FID_TO_ADDR_HASH)
-    return raw || {}
-  } catch {
-    return {}
-  }
-}
-
 /**
- * Called whenever a wallet connects. If the same wallet previously used the
- * app via a Farcaster FID, we move their stats from `fid:N` to `addr:0x...`
- * so the leaderboard + credits stay with them.
+ * Called when a wallet connects. If the same wallet previously used the app
+ * via a Farcaster FID (and submitted their base address at that time), we
+ * migrate their credits + leaderboard history + reward address from
+ * `fid:N` → `addr:0x...`.
  *
- * Strategy: we don't know the fid↔address mapping for old users, so we:
- *  - store a hint in `fid:to:address` hash when we CAN match (via
- *    `reward:addresses` hash, where users submitted their base address while
- *    logged in via fid)
- *  - on wallet connect, we check that hash and merge if found.
+ * Idempotent — safe to call on every /api/me.
  */
 export async function migrateFidToAddressIfPossible(address: string): Promise<{ migrated: boolean; fromFid?: number }> {
   const redis = getRedisClient()
@@ -183,10 +171,11 @@ export async function migrateFidToAddressIfPossible(address: string): Promise<{ 
   if (!/^0x[a-f0-9]{40}$/.test(addrLower)) return { migrated: false }
 
   const newUserId = `addr:${addrLower}`
+  const newUserKey = `user:${newUserId}`
 
   try {
-    // Find legacy fid for this address, if any.
-    // reward:addresses hash: userId -> baseAddress
+    // Find legacy fid for this address (user must have submitted reward
+    // address while logged in with fid).
     const rewards = await getRewardAddressMap(redis)
     let legacyFidUserId: string | null = null
     for (const [uid, addr] of Object.entries(rewards)) {
@@ -199,14 +188,13 @@ export async function migrateFidToAddressIfPossible(address: string): Promise<{ 
 
     if (!legacyFidUserId) return { migrated: false }
 
-    // Already migrated? Check the addr user record.
-    const newUserKey = `user:${newUserId}`
+    // Skip if already migrated
     const migratedMark = await redis.hget(newUserKey, 'migratedFrom').catch(() => null)
     if (migratedMark && String(migratedMark) === legacyFidUserId) {
       return { migrated: false }
     }
 
-    // 1) Merge credits (add legacy credits to address user)
+    // 1) Merge credits + counters
     const legacyUserKey = `user:${legacyFidUserId}`
     const legacyData = (await redis.hgetall<Record<string, string>>(legacyUserKey)) || {}
     const legacyCredits = Number(legacyData.credits || '0')
@@ -221,21 +209,22 @@ export async function migrateFidToAddressIfPossible(address: string): Promise<{ 
     if (legacyPost > 0) await redis.hincrby(newUserKey, 'postCount', legacyPost)
     if (legacyPhoto > 0) await redis.hincrby(newUserKey, 'photoCount', legacyPhoto)
 
+    const now = new Date().toISOString()
     await redis.hset(newUserKey, {
       id: newUserId,
       migratedFrom: legacyFidUserId,
-      migratedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      migratedAt: now,
+      updatedAt: now,
     })
 
-    // 2) Zero out legacy credits so they don't double-spend
+    // 2) Zero out legacy credits so they can't double-spend
     await redis.hset(legacyUserKey, {
       credits: '0',
       migratedTo: newUserId,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
     })
 
-    // 3) Migrate daily leaderboard entries for all recent days (~30)
+    // 3) Migrate 30 days of daily leaderboard entries
     const today = new Date()
     for (let i = 0; i < 30; i++) {
       const day = datePlusDays(today, -i)
@@ -265,7 +254,7 @@ export async function migrateFidToAddressIfPossible(address: string): Promise<{ 
       // ignore
     }
 
-    // 5) Remember the mapping (for debugging / future-proofing)
+    // 5) Store fid->address hint
     const fid = parseFid(legacyFidUserId)
     if (fid != null) {
       try {
@@ -273,6 +262,15 @@ export async function migrateFidToAddressIfPossible(address: string): Promise<{ 
       } catch {
         // ignore
       }
+    }
+
+    // 6) Invalidate leaderboard cache so new layout is rebuilt
+    try {
+      await redis.del(LB_KEY_7D)
+      await redis.del(LB_KEY_PREV)
+      await redis.hdel(LB_META_KEY, 'updatedAt')
+    } catch {
+      // ignore
     }
 
     return { migrated: true, fromFid: fid ?? undefined }
