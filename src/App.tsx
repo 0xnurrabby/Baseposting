@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { Copy, Moon, Send, Sparkles, Sun, Wallet, HandCoins, X, Image as ImageIcon, Palette } from 'lucide-react'
 import { getAddress, isAddress, parseUnits, encodeFunctionData, keccak256, toHex } from 'viem'
@@ -187,12 +186,19 @@ function raceWithTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> 
 }
 
 // ---------------------------------------------------------------------------
-// Estimated-time countdown for loading buttons
+// LoadingLabel — memoized so it doesn't re-trigger parent renders when idle.
+// When active=false it returns a static fragment (no hooks running).
 // ---------------------------------------------------------------------------
-function useEstimatedCountdown(active: boolean, estimateSec: number) {
+const LoadingLabel = React.memo(function LoadingLabel(props: {
+  active: boolean
+  estimateSec: number
+  idleText: string
+  icon?: React.ReactNode
+}) {
   const [elapsed, setElapsed] = useState(0)
+
   useEffect(() => {
-    if (!active) {
+    if (!props.active) {
       setElapsed(0)
       return
     }
@@ -201,22 +207,8 @@ function useEstimatedCountdown(active: boolean, estimateSec: number) {
       setElapsed(Math.floor((Date.now() - startedAt) / 1000))
     }, 500)
     return () => clearInterval(t)
-  }, [active])
+  }, [props.active])
 
-  const remaining = Math.max(0, estimateSec - elapsed)
-  const label =
-    elapsed < 2
-      ? 'Starting…'
-      : remaining > 0
-        ? `Cooking… ~${remaining}s left`
-        : 'Finalizing, almost there…'
-
-  const progress = Math.min(0.98, elapsed / Math.max(1, estimateSec))
-  return { elapsed, remaining, label, progress }
-}
-
-function LoadingLabel(props: { active: boolean; estimateSec: number; idleText: string; icon?: React.ReactNode }) {
-  const { label, progress } = useEstimatedCountdown(props.active, props.estimateSec)
   if (!props.active) {
     return (
       <>
@@ -225,6 +217,16 @@ function LoadingLabel(props: { active: boolean; estimateSec: number; idleText: s
       </>
     )
   }
+
+  const remaining = Math.max(0, props.estimateSec - elapsed)
+  const label =
+    elapsed < 2
+      ? 'Starting…'
+      : remaining > 0
+        ? `Cooking… ~${remaining}s left`
+        : 'Finalizing, almost there…'
+  const progress = Math.min(0.98, elapsed / Math.max(1, props.estimateSec))
+
   return (
     <span className="relative flex w-full items-center justify-center gap-2 overflow-hidden">
       <span
@@ -240,7 +242,7 @@ function LoadingLabel(props: { active: boolean; estimateSec: number; idleText: s
       <span className="relative ml-1 text-sm font-semibold">{label}</span>
     </span>
   )
-}
+})
 
 export default function App() {
   const [mounted, setMounted] = useState(false)
@@ -251,8 +253,6 @@ export default function App() {
   const [capabilities, setCapabilities] = useState<string[]>([])
   const [miniClient, setMiniClient] = useState<any | null>(null)
 
-  // Guard: once miniLoaded becomes true, we do NOT run the boot effect's
-  // state setters again — this kills the flicker on Base app.
   const bootAppliedRef = useRef(false)
 
   const [identity, setIdentity] = useState<Identity>({})
@@ -278,7 +278,6 @@ export default function App() {
   const [sharing, setSharing] = useState(false)
   const [gettingCredit, setGettingCredit] = useState(false)
 
-  // Pending tx verification survives tab backgrounding / navigation / reload.
   const verifyInFlight = useRef<string>('')
 
   const [walletConnecting, setWalletConnecting] = useState(false)
@@ -514,7 +513,6 @@ export default function App() {
     }
 
     const boot = async () => {
-      // Race: use initMiniApp() result OR a 1.5s fallback — whichever first.
       const timeoutFallback = new Promise<any>((resolve) =>
         setTimeout(() => resolve({ isInMiniApp: false, capabilities: [], user: null, client: null }), 1500)
       )
@@ -522,9 +520,6 @@ export default function App() {
       const winner = await Promise.race([initMiniApp(), timeoutFallback])
       applyState(winner)
 
-      // If timeout won, wait a bit more for the real SDK to finish — but
-      // DO NOT touch render-affecting state anymore (bootAppliedRef is set).
-      // We only use the real result for auto-connecting the miniapp wallet.
       let realState: any = winner
       try {
         realState = await Promise.race([
@@ -627,7 +622,6 @@ export default function App() {
       if (!raw) return null
       const parsed = JSON.parse(raw)
       if (!parsed?.txHash || !parsed?.address) return null
-      // Expire anything older than 2 hours so we don't retry forever.
       if (Date.now() - Number(parsed.ts || 0) > 2 * 60 * 60 * 1000) {
         clearPendingTx()
         return null
@@ -683,7 +677,6 @@ export default function App() {
     }
   }
 
-  // On boot / on wallet connect, auto-resume any pending tx verification.
   useEffect(() => {
     if (!miniLoaded || !identity.address) return
     const pending = readPendingTx()
@@ -1049,14 +1042,8 @@ export default function App() {
         toast.message('Transaction submitted. You can close the app — credit will be added automatically.')
       }
 
-      // PERSIST the pending tx — survives backgrounding, navigation, reload.
       savePendingTx(txHash, addr)
-
-      // Start background verification; DO NOT await, so the user is free
-      // to leave this screen / switch tabs / close the app.
       void verifyCreditTxInBackground({ address: addr }, txHash)
-
-      // Free up the button immediately.
       setGettingCredit(false)
     } catch (e: any) {
       if (isUserRejection(e)) {
@@ -1358,168 +1345,144 @@ export default function App() {
                 </CardContent>
               </Card>
 
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.2 }}
-              >
-                <Card className="mt-6">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Basepost</div>
-                        <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-                          Photo style: <span className="font-semibold text-zinc-900 dark:text-zinc-100">{photoStyleLabel}</span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 shrink-0 -mt-0.5">
-                        <button
-                          onClick={() => setPhotoStyleOpen(true)}
-                          className="rounded-2xl p-2 text-zinc-700 transition hover:bg-zinc-100 active:scale-[0.98] dark:text-zinc-200 dark:hover:bg-zinc-900"
-                          aria-label="Choose photo style"
-                          title="Choose photo style"
-                        >
-                          <Palette className="h-7 w-7 lb-rainbow" />
-                        </button>
-
-                        <motion.div
-                          animate={
-                            result && !generatingImage
-                              ? { scale: [1, 1.06, 1], y: [0, -1, 0] }
-                              : { scale: 1, y: 0 }
-                          }
-                          transition={
-                            result && !generatingImage
-                              ? { duration: 0.9, repeat: Infinity, repeatDelay: 1.2, ease: 'easeInOut' }
-                              : { duration: 0 }
-                          }
-                        >
-                          <Button
-                            variant={result ? 'success' : 'attention'}
-                            isLoading={false}
-                            disabled={!result || generating || posting || generatingImage}
-                            onClick={() => void onGeneratePhoto()}
-                            className="px-5 py-2.5 text-sm"
-                          >
-                            <LoadingLabel
-                              active={generatingImage}
-                              estimateSec={35}
-                              idleText="Generate Photo (-5c)"
-                              icon={<ImageIcon className="h-4 w-4" />}
-                            />
-                          </Button>
-                        </motion.div>
+              {/* NOTE: no motion.div wrapper here — motion re-mount was causing the
+                  "Basepost" card to blink on every visibilitychange in Base app. */}
+              <Card className="mt-6">
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Basepost</div>
+                      <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                        Photo style: <span className="font-semibold text-zinc-900 dark:text-zinc-100">{photoStyleLabel}</span>
                       </div>
                     </div>
-                  </CardHeader>
-                  <CardContent>
-                    {generatingImage ? (
-                      <div className="mb-3">
-                        <Skeleton className="w-full rounded-2xl" style={{ height: 240 }} />
-                      </div>
-                    ) : imageUrl ? (
-                      <div className="mb-3">
-                        <img
-                          src={imageUrl}
-                          alt="Generated"
-                          className="w-full rounded-2xl border border-zinc-200 bg-white object-cover dark:border-zinc-800 dark:bg-zinc-950"
-                          style={{ aspectRatio: '4 / 3' }}
-                          loading="eager"
-                          decoding="async"
-                          referrerPolicy="no-referrer"
-                          onLoad={() => setImageError(false)}
-                          onError={() => setImageError(true)}
+
+                    <div className="flex items-center gap-2 shrink-0 -mt-0.5">
+                      <button
+                        onClick={() => setPhotoStyleOpen(true)}
+                        className="rounded-2xl p-2 text-zinc-700 transition hover:bg-zinc-100 active:scale-[0.98] dark:text-zinc-200 dark:hover:bg-zinc-900"
+                        aria-label="Choose photo style"
+                        title="Choose photo style"
+                      >
+                        <Palette className="h-7 w-7 lb-rainbow" />
+                      </button>
+
+                      <Button
+                        variant={result ? 'success' : 'attention'}
+                        isLoading={false}
+                        disabled={!result || generating || posting || generatingImage}
+                        onClick={() => void onGeneratePhoto()}
+                        className="px-5 py-2.5 text-sm"
+                      >
+                        <LoadingLabel
+                          active={generatingImage}
+                          estimateSec={35}
+                          idleText="Generate Photo (-5c)"
+                          icon={<ImageIcon className="h-4 w-4" />}
                         />
-
-                        {imageError ? (
-                          <div className="mt-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-900 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
-                            Couldn’t load the generated image.
-                            <button
-                              className="ml-2 underline underline-offset-2"
-                              onClick={() => {
-                                setImageError(false)
-                                setImageUrl((prev) => {
-                                  if (!prev) return prev
-                                  if (prev.startsWith('data:')) return prev
-                                  return `${prev}${prev.includes('?') ? '&' : '?'}cb=${Date.now()}`
-                                })
-                              }}
-                            >
-                              Retry
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-
-                    {generating ? (
-                      <div className="space-y-3">
-                        <Skeleton className="h-4 w-full" />
-                        <Skeleton className="h-4 w-11/12" />
-                        <Skeleton className="h-4 w-4/5" />
-                      </div>
-                    ) : result ? (
-                      <div className="whitespace-pre-wrap rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
-                        {result}
-                      </div>
-                    ) : (
-                      <div className="text-sm text-zinc-600 dark:text-zinc-400">Hit Generate to see your post here ⌯⌲</div>
-                    )}
-
-                    <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-                      <Button
-                        variant="primary"
-                        isLoading={posting}
-                        disabled={!result}
-                        onClick={() => void onPostDirectly()}
-                        className="w-full sm:w-auto"
-                      >
-                        <Send className="h-4 w-4" />
-                        Post Directly
-                      </Button>
-
-                      <Button
-                        variant="secondary"
-                        disabled={!result}
-                        onClick={() => void onCopy()}
-                        className="w-full sm:w-auto"
-                      >
-                        <Copy className="h-4 w-4" />
-                        Copy
                       </Button>
                     </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {generatingImage ? (
+                    <div className="mb-3">
+                      <Skeleton className="w-full rounded-2xl" style={{ height: 240 }} />
+                    </div>
+                  ) : imageUrl ? (
+                    <div className="mb-3">
+                      <img
+                        src={imageUrl}
+                        alt="Generated"
+                        className="w-full rounded-2xl border border-zinc-200 bg-white object-cover dark:border-zinc-800 dark:bg-zinc-950"
+                        style={{ aspectRatio: '4 / 3' }}
+                        loading="eager"
+                        decoding="async"
+                        referrerPolicy="no-referrer"
+                        onLoad={() => setImageError(false)}
+                        onError={() => setImageError(true)}
+                      />
 
-                    {!identity.address ? (
-                      <div className="mt-4 rounded-xl border border-yellow-200 bg-yellow-50 p-3 text-xs text-yellow-900 dark:border-yellow-900/40 dark:bg-yellow-950/30 dark:text-yellow-200">
-                        Connect your wallet to keep credits tied to you.
-                        <div className="mt-2">
-                          <Button variant="secondary" onClick={() => void ensureWalletIdentity()}>
-                            <Wallet className="h-4 w-4" />
-                            Connect Wallet
-                          </Button>
+                      {imageError ? (
+                        <div className="mt-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-900 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
+                          Couldn’t load the generated image.
+                          <button
+                            className="ml-2 underline underline-offset-2"
+                            onClick={() => {
+                              setImageError(false)
+                              setImageUrl((prev) => {
+                                if (!prev) return prev
+                                if (prev.startsWith('data:')) return prev
+                                return `${prev}${prev.includes('?') ? '&' : '?'}cb=${Date.now()}`
+                              })
+                            }}
+                          >
+                            Retry
+                          </button>
                         </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {generating ? (
+                    <div className="space-y-3">
+                      <Skeleton className="h-4 w-full" />
+                      <Skeleton className="h-4 w-11/12" />
+                      <Skeleton className="h-4 w-4/5" />
+                    </div>
+                  ) : result ? (
+                    <div className="whitespace-pre-wrap rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
+                      {result}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-zinc-600 dark:text-zinc-400">Hit Generate to see your post here ⌯⌲</div>
+                  )}
+
+                  <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                    <Button
+                      variant="primary"
+                      isLoading={posting}
+                      disabled={!result}
+                      onClick={() => void onPostDirectly()}
+                      className="w-full sm:w-auto"
+                    >
+                      <Send className="h-4 w-4" />
+                      Post Directly
+                    </Button>
+
+                    <Button
+                      variant="secondary"
+                      disabled={!result}
+                      onClick={() => void onCopy()}
+                      className="w-full sm:w-auto"
+                    >
+                      <Copy className="h-4 w-4" />
+                      Copy
+                    </Button>
+                  </div>
+
+                  {!identity.address ? (
+                    <div className="mt-4 rounded-xl border border-yellow-200 bg-yellow-50 p-3 text-xs text-yellow-900 dark:border-yellow-900/40 dark:bg-yellow-950/30 dark:text-yellow-200">
+                      Connect your wallet to keep credits tied to you.
+                      <div className="mt-2">
+                        <Button variant="secondary" onClick={() => void ensureWalletIdentity()}>
+                          <Wallet className="h-4 w-4" />
+                          Connect Wallet
+                        </Button>
                       </div>
-                    ) : null}
-                  </CardContent>
-                </Card>
-              </motion.div>
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
 
               {photoStyleOpen ? (
                 <div className="fixed inset-0 z-50">
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
+                  <div
                     className="absolute inset-0 bg-black/50"
                     onClick={() => setPhotoStyleOpen(false)}
                   />
 
-                  <motion.div
-                    initial={{ y: 32, opacity: 0 }}
-                    animate={{ y: 0, opacity: 1 }}
-                    exit={{ y: 32, opacity: 0 }}
-                    transition={{ duration: 0.2 }}
+                  <div
                     className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-2xl rounded-t-3xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
                   >
                     <div className="flex items-center justify-between">
@@ -1580,25 +1543,18 @@ export default function App() {
                     <div className="mt-3 text-xs text-zinc-500 dark:text-zinc-500">
                       Tip: If you select nothing, the server will use default.
                     </div>
-                  </motion.div>
+                  </div>
                 </div>
               ) : null}
 
               {tipOpen ? (
                 <div className="fixed inset-0 z-50">
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
+                  <div
                     className="absolute inset-0 bg-black/50"
                     onClick={() => closeTip()}
                   />
 
-                  <motion.div
-                    initial={{ y: 32, opacity: 0 }}
-                    animate={{ y: 0, opacity: 1 }}
-                    exit={{ y: 32, opacity: 0 }}
-                    transition={{ duration: 0.2 }}
+                  <div
                     className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-2xl rounded-t-3xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
                   >
                     <div className="flex items-center justify-between">
@@ -1616,24 +1572,14 @@ export default function App() {
                     </div>
 
                     {tipStage === 'done' ? (
-                      <motion.div
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.25 }}
-                        className="mt-8 flex flex-col items-center text-center"
-                      >
-                        <motion.div
-                          initial={{ scale: 0.85 }}
-                          animate={{ scale: 1 }}
-                          transition={{ type: 'spring', stiffness: 260, damping: 16 }}
-                          className="flex h-14 w-14 items-center justify-center rounded-full border border-zinc-200 bg-zinc-50 text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
-                        >
+                      <div className="mt-8 flex flex-col items-center text-center">
+                        <div className="flex h-14 w-14 items-center justify-center rounded-full border border-zinc-200 bg-zinc-50 text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white">
                           <HandCoins className="h-6 w-6" />
-                        </motion.div>
+                        </div>
                         <div className="mt-4 text-base font-semibold text-zinc-900 dark:text-zinc-100">Tip sent 💙</div>
                         <div className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Thank you. You’re making this mini app better.</div>
                         <div className="mt-4 text-xs text-zinc-500 dark:text-zinc-500">Closing…</div>
-                      </motion.div>
+                      </div>
                     ) : (
                       <>
                         <div className="mt-4 grid grid-cols-4 gap-2">
@@ -1686,7 +1632,7 @@ export default function App() {
                         </div>
                       </>
                     )}
-                  </motion.div>
+                  </div>
                 </div>
               ) : null}
             </>
@@ -1772,7 +1718,7 @@ export default function App() {
         </div>
       ) : null}
 
-      <RoadmapBell />
+      {miniLoaded ? <RoadmapBell /> : null}
     </div>
   )
 }
