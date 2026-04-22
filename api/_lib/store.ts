@@ -3,7 +3,6 @@ import { Redis } from '@upstash/redis'
 export type UserRecord = {
   id: string
   credits: number
-  // Engagement metrics (best-effort)
   txCount?: number
   photoCount?: number
   postCount?: number
@@ -14,10 +13,6 @@ export type UserRecord = {
 
 const memory = new Map<string, UserRecord>()
 const memoryTx = new Set<string>()
-
-// Best-effort recent history (used to diversify post generation).
-// - In production (Upstash) this is stored in Redis lists.
-// - In local/dev/no-redis we keep a small in-memory buffer.
 const memoryRecent = new Map<string, any[]>()
 
 type MetricKey = 'txCount' | 'photoCount' | 'postCount'
@@ -55,19 +50,8 @@ function getOrCreateUserMemory(id: string): UserRecord {
   return rec
 }
 
-async function withRedis<T>(fn: (redis: Redis) => Promise<T>, fallback: T): Promise<T> {
-  const redis = getRedis()
-  if (!redis) return fallback
-  try {
-    return await fn(redis)
-  } catch {
-    return fallback
-  }
-}
-
 function todayUtcDateKey() {
   const d = new Date()
-  // Use UTC date to enforce the "once per day" share rule.
   const yyyy = d.getUTCFullYear()
   const mm = String(d.getUTCMonth() + 1).padStart(2, '0')
   const dd = String(d.getUTCDate()).padStart(2, '0')
@@ -83,12 +67,10 @@ function getRedis(): Redis | null {
   try {
     return new Redis({ url, token })
   } catch {
-    // If env values are malformed, never crash the function.
     return null
   }
 }
 
-// Expose for other serverless endpoints (e.g. notifications) to reuse the same Upstash config.
 export function getRedisClient() {
   return getRedis()
 }
@@ -104,7 +86,6 @@ export async function getOrCreateUser(id: string): Promise<UserRecord> {
   try {
     data = await redis.hgetall<Record<string, string>>(key)
   } catch {
-    // If Redis is flaky, fall back to memory so functions never crash.
     return getOrCreateUserMemory(id)
   }
 
@@ -122,7 +103,6 @@ export async function getOrCreateUser(id: string): Promise<UserRecord> {
         lastShareAt: '',
       })
 
-      // Track new/active users (best-effort)
       try {
         const ts = Date.now()
         await redis.zadd(ZSET_NEW_USERS, { score: ts, member: id })
@@ -170,7 +150,6 @@ export async function setUser(user: UserRecord): Promise<void> {
       updatedAt: user.updatedAt,
     })
   } catch {
-    // Never crash if Redis is down.
     memory.set(user.id, user)
   }
 }
@@ -187,11 +166,9 @@ function formatLine(u: UserRecord) {
 }
 
 async function zrangeWithScores(redis: any, key: string, start: number, stop: number, rev: boolean) {
-  // Upstash supports options-based zrange. We keep a fallback for older servers.
   try {
     return await redis.zrange(key, start, stop, { rev, withScores: true })
   } catch {
-    // fallback: zrevrange with WITHSCORES
     if (rev && typeof redis.zrevrange === 'function') {
       try {
         return await redis.zrevrange(key, start, stop, { withScores: true })
@@ -211,7 +188,6 @@ async function rebuildAdminSummaries(redis: any) {
     for (let i = 0; i < arr.length; i++) {
       const v = arr[i]
       if (typeof v === 'string') {
-        // If the next element is a number (WITHSCORES alternating array), skip it.
         out.push(v)
         if (typeof arr[i + 1] === 'number') i++
         continue
@@ -223,11 +199,9 @@ async function rebuildAdminSummaries(redis: any) {
     return out
   }
 
-  // New users: newest first
   const newest = await zrangeWithScores(redis, ZSET_NEW_USERS, 0, limit - 1, true)
   const newIds = Array.isArray(newest) ? extractMembers(newest) : []
 
-  // Most active: highest score first
   const active = await zrangeWithScores(redis, ZSET_ACTIVE_USERS, 0, limit - 1, true)
   const activeIds = Array.isArray(active) ? extractMembers(active) : []
 
@@ -262,7 +236,6 @@ async function rebuildAdminSummaries(redis: any) {
     if (u) activeLines.push(formatLine(u))
   }
 
-  // Single "box" style strings for Upstash Data Browser
   await redis.set(SUMMARY_NEW_KEY, newLines.join('\n'))
   await redis.set(SUMMARY_ACTIVE_KEY, activeLines.join('\n'))
 }
@@ -278,11 +251,9 @@ export async function incrementMetric(id: string, metric: MetricKey, delta: numb
   }
 
   const key = `user:${id}`
-  // Keep user record up-to-date
   await redis.hincrby(key, metric, delta)
   await redis.hset(key, { updatedAt: nowIso() })
 
-  // Ensure membership in the scoreboards
   try {
     const existing = await redis.zscore(ZSET_NEW_USERS, id)
     if (existing == null) {
@@ -292,11 +263,9 @@ export async function incrementMetric(id: string, metric: MetricKey, delta: numb
     // ignore
   }
 
-  // Activity scoreboard: increment score
   try {
     await redis.zincrby(ZSET_ACTIVE_USERS, activeDelta, id)
   } catch {
-    // Some Upstash versions don't expose zincrby; fallback by reading + zadd
     try {
       const cur = (await redis.zscore(ZSET_ACTIVE_USERS, id)) ?? 0
       await redis.zadd(ZSET_ACTIVE_USERS, { score: Number(cur) + activeDelta, member: id })
@@ -305,7 +274,6 @@ export async function incrementMetric(id: string, metric: MetricKey, delta: numb
     }
   }
 
-  // Refresh summaries so the Data Browser shows the latest (best-effort).
   try {
     await rebuildAdminSummaries(redis)
   } catch {
@@ -383,17 +351,11 @@ export async function markTxCounted(txHash: string): Promise<void> {
     return
   }
   try {
-    // Keep for 90 days.
     await redis.set(key, 1, { ex: 60 * 60 * 24 * 90 })
   } catch {
     memoryTx.add(key)
   }
 }
-
-
-// ---------------------------------------------------------------------------
-// Recent generation history (post diversity)
-// ---------------------------------------------------------------------------
 
 function recentKey(kind: string, userId: string) {
   const safeKind = String(kind || 'post').toLowerCase().replace(/[^a-z0-9_\-:]/g, '_')
@@ -417,7 +379,7 @@ export async function getRecent(userId: string, kind: string, limit = 12): Promi
       try {
         out.push(JSON.parse(String(s)))
       } catch {
-        // ignore malformed
+        // ignore
       }
     }
     return out
@@ -442,7 +404,6 @@ export async function pushRecent(userId: string, kind: string, value: any, maxLe
   try {
     await redis.lpush(key, payload)
     await redis.ltrim(key, 0, cap - 1)
-    // Keep for 30 days so history doesn't grow unbounded.
     await redis.expire(key, 60 * 60 * 24 * 30)
   } catch {
     // ignore
