@@ -28,12 +28,8 @@ const LOG_ACTION_ABI = [
   },
 ] as const
 
-// Public site URL for embeds/shares (defaults to the current host)
 const SITE_URL = import.meta.env.VITE_PUBLIC_SITE_URL || window.location.origin
 
-// Share copy rotation: avoids repeating the exact same share text every time.
-// We keep a short pool of attention-grabbing templates and rotate through them
-// in a shuffled order persisted in localStorage.
 const WALLET_CREDIT_KEY = 'bp_credits_cache_v1'
 
 const SHARE_COPY_TEMPLATES = [
@@ -56,7 +52,6 @@ function normalizeSiteUrl(siteUrl: string) {
 
 function randInt(maxExclusive: number) {
   if (maxExclusive <= 1) return 0
-  // Use crypto when available for better randomness.
   try {
     const buf = new Uint32Array(1)
     crypto.getRandomValues(buf)
@@ -85,7 +80,6 @@ function getRotatingShareCopy(siteUrl: string) {
 
   if (pool.length === 0) {
     pool = Array.from({ length: SHARE_COPY_TEMPLATES.length }, (_, i) => i)
-    // Fisher–Yates shuffle.
     for (let i = pool.length - 1; i > 0; i--) {
       const j = randInt(i + 1)
       ;[pool[i], pool[j]] = [pool[j], pool[i]]
@@ -106,16 +100,10 @@ function getRotatingShareCopy(siteUrl: string) {
 const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
 const USDC_DECIMALS = 6
 
-// Recipient for tips (must be a valid checksummed EVM address).
-// Default: the address you requested. Override via VITE_TIP_RECIPIENT if needed.
 const RECIPIENT =
   import.meta.env.VITE_TIP_RECIPIENT ||
   '0xe8Bda2Ed9d2FC622D900C8a76dc455A3e79B041f'
 
-// Optional: ERC-7677 Paymaster web service URL (CDP Paymaster & Bundler endpoint).
-// If provided, and if the wallet supports the paymasterService capability, Get Credit will be gasless.
-// Example (from CDP portal > Onchain Tools > Paymaster > Configuration):
-// https://api.developer.coinbase.com/rpc/v1/base/<projectId>
 const PAYMASTER_SERVICE_URL = (import.meta.env.VITE_PAYMASTER_SERVICE_URL || '').trim()
 
 function isUserRejection(e: any) {
@@ -124,7 +112,6 @@ function isUserRejection(e: any) {
 }
 
 function isMethodNotSupported(e: any) {
-  // JSON-RPC "Method not found" is commonly -32601 across providers.
   const msg = String(e?.message || '').toLowerCase()
   return (
     e?.code === -32601 ||
@@ -135,12 +122,10 @@ function isMethodNotSupported(e: any) {
   )
 }
 
-
 function isInvalidParamsOrCapability(e: any) {
-  // Some wallets support wallet_sendCalls but reject unknown fields/capabilities (e.g. dataSuffix)
   const msg = String(e?.message || '').toLowerCase()
   return (
-    e?.code === -32602 || // invalid params
+    e?.code === -32602 ||
     msg.includes('invalid params') ||
     msg.includes('capabilities') ||
     msg.includes('datasuffix') ||
@@ -150,8 +135,6 @@ function isInvalidParamsOrCapability(e: any) {
   )
 }
 
-
-
 function isHexString(value: any): value is `0x${string}` {
   return typeof value === 'string' && /^0x[0-9a-fA-F]*$/.test(value)
 }
@@ -159,27 +142,10 @@ function isHexString(value: any): value is `0x${string}` {
 function appendCalldataSuffix(data: `0x${string}`, suffix?: string | null): `0x${string}` {
   if (!suffix) return data
   if (!isHexString(suffix)) return data
-  // Must be whole bytes
   if (((suffix.length - 2) % 2) !== 0) return data
   if (suffix === '0x') return data
   if (data === '0x') return suffix
   return (data + suffix.slice(2)) as `0x${string}`
-}
-
-
-function isHexBytes(v: any) {
-  return typeof v === 'string' && v.startsWith('0x') && v.length % 2 === 0
-}
-
-// ERC-8021 attribution is "data suffix bytes appended to calldata".
-// For Base Builder Code analytics, AA wallets must apply the ERC-8021 suffix via the
-// `capabilities.dataSuffix` field (so it lands on the UserOp callData). We still keep a
-// fallback that appends the suffix directly when a wallet rejects capabilities.
-function appendErc8021Suffix(calldata: string, suffix?: string) {
-  if (!isHexBytes(calldata) || !isHexBytes(suffix)) return calldata
-  // Avoid accidental double-append
-  if (calldata.toLowerCase().endsWith(suffix.slice(2).toLowerCase())) return calldata
-  return (calldata + suffix.slice(2)) as `0x${string}`
 }
 
 async function copyText(text: string) {
@@ -195,11 +161,33 @@ function pad32(hexNo0x: string) {
 }
 
 function encodeErc20Transfer(recipient: string, amount: bigint) {
-  // transfer(address,uint256) selector = a9059cbb
   const selector = 'a9059cbb'
   const to = pad32(recipient)
   const val = pad32(amount.toString(16))
   return `0x${selector}${to}${val}`
+}
+
+// Race a promise with a timeout — whichever completes first wins.
+function raceWithTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    let done = false
+    const t = setTimeout(() => {
+      if (done) return
+      done = true
+      resolve(fallback)
+    }, ms)
+    p.then((v) => {
+      if (done) return
+      done = true
+      clearTimeout(t)
+      resolve(v)
+    }).catch(() => {
+      if (done) return
+      done = true
+      clearTimeout(t)
+      resolve(fallback)
+    })
+  })
 }
 
 export default function App() {
@@ -210,10 +198,11 @@ export default function App() {
   const [isInMiniApp, setIsInMiniApp] = useState(false)
   const [capabilities, setCapabilities] = useState<string[]>([])
 
-  // Mini App user profile (for nicer UI; not required by backend APIs)
-  const [miniUser, setMiniUser] = useState<MiniAppUser | null>(null)
+  // Kept for API compatibility (passed to listAvailableWallets), but we no longer
+  // render Farcaster user info in the header.
   const [miniClient, setMiniClient] = useState<any | null>(null)
 
+  // identity: WALLET-FIRST. We always prefer `address`; `fid` stays undefined.
   const [identity, setIdentity] = useState<Identity>({})
   const [view, setView] = useState<'home' | 'leaderboard'>('home')
   const [credits, setCredits] = useState<number | null>(null)
@@ -227,9 +216,6 @@ export default function App() {
   const [imageError, setImageError] = useState(false)
   const [generatingImage, setGeneratingImage] = useState(false)
 
-  // Photo style selection (optional).
-  // - If user selects a style, we persist it locally and send it to /api/generate-image.
-  // - If user doesn't select anything, we don't send a style and the server uses env default.
   const PHOTO_STYLE_KEY = 'bp_photo_style_preset_v1'
   const [photoStyleOpen, setPhotoStyleOpen] = useState(false)
   const [photoStylePreset, setPhotoStylePreset] = useState<string | null>(null)
@@ -240,19 +226,15 @@ export default function App() {
   const [sharing, setSharing] = useState(false)
   const [gettingCredit, setGettingCredit] = useState(false)
 
-  // Wallet connect UX
   const [walletConnecting, setWalletConnecting] = useState(false)
   const [walletModalOpen, setWalletModalOpen] = useState(false)
   const [walletOptions, setWalletOptions] = useState<WalletOption[]>([])
   const [selectedWalletId, setSelectedWalletId] = useState('')
 
-  // Tip modal state machine
   const [tipOpen, setTipOpen] = useState(false)
   const [tipUsd, setTipUsd] = useState('500')
   const [tipStage, setTipStage] = useState<'idle' | 'preparing' | 'confirm' | 'sending' | 'done'>('idle')
 
-  // Used to show a toast AFTER returning from the Farcaster composer, so the user
-  // gets a nice "done" feeling instead of a stuck spinner.
   const PENDING_TOAST_KEY = 'bp_pending_toast_v1'
   const PENDING_SHARE_AWARD_KEY = 'bp_pending_share_award_v1'
 
@@ -268,10 +250,6 @@ export default function App() {
     const raw = String(maybeRelative || '').trim()
     if (!raw) return ''
     try {
-      // Internal API/image paths must stay on the CURRENT origin.
-      // SITE_URL is for public embeds/shares and may point to a different host
-      // (for example www.baseposting.online vs baseposting.online), which can
-      // break in-page previews after image generation.
       const base = raw.startsWith('/') ? window.location.origin : SITE_URL
       return new URL(raw, base).toString()
     } catch {
@@ -279,7 +257,6 @@ export default function App() {
     }
   }
 
-  // Keep the button responsive; we enforce identity + credits inside the handler.
   const walletConnected = Boolean(identity.address)
   const canGenerate = useMemo(() => !generating && miniLoaded && walletConnected, [generating, miniLoaded, walletConnected])
 
@@ -344,7 +321,6 @@ export default function App() {
       // ignore
     }
 
-    // Persisted photo style preference (optional)
     const ps = localStorage.getItem(PHOTO_STYLE_KEY)
     if (ps && typeof ps === 'string') setPhotoStylePreset(ps)
   }, [])
@@ -359,21 +335,14 @@ export default function App() {
     }
   }, [identity.address, credits])
 
-  // When the user comes back from the Farcaster composer, some hosts don't
-  // resolve composeCast() promises. This effect ensures we:
-  // 1) clear stuck loading states
-  // 2) refresh credits
-  // 3) show a pending toast ("+2 credits", "Done", etc.)
   useEffect(() => {
     const onReturn = () => {
       if (document.visibilityState !== 'visible') return
 
-      // Safety: never let the UI stay stuck.
       setSharing(false)
       setPosting(false)
 
-      // Refresh credits best-effort (only when we have an identity).
-      if (miniLoaded && (identity.address || identity.fid)) {
+      if (miniLoaded && identity.address) {
         void (async () => {
           let handledShareAward = false
           try {
@@ -408,7 +377,6 @@ export default function App() {
         })()
       }
 
-      // Show deferred toast.
       try {
         const raw = sessionStorage.getItem(PENDING_TOAST_KEY)
         if (!raw) return
@@ -432,31 +400,31 @@ export default function App() {
       window.removeEventListener('focus', onReturn)
     }
   }, [identity.address, miniLoaded])
-useEffect(() => {
-  const params = new URLSearchParams(window.location.search)
-  if (params.get('src') !== 'notif') return
 
-  const fid = Number(params.get('fid'))
-  const appFid = Number(params.get('appFid'))
-  const nid = params.get('nid') || ''
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('src') !== 'notif') return
 
-  if (Number.isFinite(fid) && Number.isFinite(appFid)) {
-    fetch('/api/notif/opened', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fid, appFid, nid }),
-    }).catch(() => {})
-  }
+    const fid = Number(params.get('fid'))
+    const appFid = Number(params.get('appFid'))
+    const nid = params.get('nid') || ''
 
-  // clean URL so it doesn't stay in address bar
-  params.delete('src')
-  params.delete('fid')
-  params.delete('appFid')
-  params.delete('nid')
-  const qs = params.toString()
-  const clean = window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash
-  window.history.replaceState({}, '', clean)
-}, [])
+    if (Number.isFinite(fid) && Number.isFinite(appFid)) {
+      fetch('/api/notif/opened', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fid, appFid, nid }),
+      }).catch(() => {})
+    }
+
+    params.delete('src')
+    params.delete('fid')
+    params.delete('appFid')
+    params.delete('nid')
+    const qs = params.toString()
+    const clean = window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash
+    window.history.replaceState({}, '', clean)
+  }, [])
 
   useEffect(() => {
     if (!mounted) return
@@ -464,7 +432,6 @@ useEffect(() => {
     localStorage.setItem('bp_theme', dark ? 'dark' : 'light')
   }, [dark, mounted])
 
-  // Auto-close the tip modal after success with a nicer appreciation message.
   useEffect(() => {
     if (!tipOpen) return
     if (tipStage !== 'done') return
@@ -475,36 +442,86 @@ useEffect(() => {
     return () => clearTimeout(t)
   }, [tipOpen, tipStage])
 
+  // ============================================================
+  // BOOT — TIMEOUT-PROOF
+  // ============================================================
+  // The Base app / Farcaster webview sometimes hangs on sdk.isInMiniApp()
+  // or sdk.getCapabilities(). We race initMiniApp() against a hard 1.5s
+  // timeout so the UI NEVER gets stuck on the skeleton screen.
+  //
+  // After we finish booting, if we're inside a mini app host, we auto
+  // attempt to pull the injected wallet provider so the user lands in
+  // the app already-connected (same UX as "wallet connect" in a browser).
+  // ============================================================
   useEffect(() => {
+    let cancelled = false
+
     const boot = async () => {
+      // 1) Race initMiniApp() with a 1.5s timeout. If SDK hangs, we fall back
+      //    to "browser mode" (isInMiniApp=false) so the UI renders immediately.
+      const state = await raceWithTimeout(
+        initMiniApp(),
+        1500,
+        { isInMiniApp: false, capabilities: [], user: null, client: null } as any
+      )
+
+      if (cancelled) return
+
+      setIsInMiniApp(Boolean(state?.isInMiniApp))
+      setCapabilities(Array.isArray(state?.capabilities) ? state.capabilities : [])
+      setMiniClient(state?.client || null)
+      // IMPORTANT: we intentionally ignore state.user.fid. Identity is now
+      // wallet-based only, so the app behaves the same in Base / Farcaster /
+      // normal browser.
+      setMiniLoaded(true)
+
+      // 2) If we're inside a mini-app host (Base app, Warpcast), try to
+      //    auto-connect the host's injected wallet. This matches how the
+      //    app worked before (auto-ready) without needing a Farcaster login.
       try {
-        const s = await initMiniApp()
-        setIsInMiniApp(s.isInMiniApp)
-        setCapabilities(s.capabilities)
-
-        // Use the Mini App context user for a friendly avatar/name.
-        setMiniUser(s.user || null)
-        setMiniClient(s.client || null)
-
-        if (s?.user?.fid) {
-          setIdentity((prev) => ({ ...prev, fid: Number(s.user.fid) }))
+        if (state?.isInMiniApp) {
+          const wallets = await raceWithTimeout(
+            listAvailableWallets({ isInMiniApp: true, client: state.client }),
+            2500,
+            [] as WalletOption[]
+          )
+          const host = wallets.find((w) => w.source === 'miniapp') || wallets[0]
+          if (host && !cancelled) {
+            try {
+              const { address } = await raceWithTimeout(
+                connectWalletProvider(host, { isInMiniApp: true, client: state.client }),
+                4000,
+                { address: '' } as any
+              )
+              if (address && !cancelled) {
+                setIdentity({ address })
+                setSelectedWalletId(host.id)
+                try {
+                  localStorage.setItem('bp_wallet_choice_v2', host.id)
+                } catch {
+                  // ignore
+                }
+              }
+            } catch {
+              // user hasn't granted wallet yet — they can tap "Connect Wallet"
+            }
+          }
         }
-      } finally {
-        setMiniLoaded(true)
+      } catch {
+        // ignore
       }
     }
+
     void boot()
+    return () => {
+      cancelled = true
+    }
   }, [])
-
-  async function onCreateWallet() {
-    await openWalletPicker()
-  }
-
 
   useEffect(() => {
     const load = async () => {
       if (!miniLoaded) return
-      if (!identity.address && !identity.fid) return
+      if (!identity.address) return
 
       setLoadingMe(true)
       try {
@@ -520,7 +537,11 @@ useEffect(() => {
     }
 
     void load()
-  }, [identity.address, identity.fid, miniLoaded])
+  }, [identity.address, miniLoaded])
+
+  async function onCreateWallet() {
+    await openWalletPicker()
+  }
 
   async function openWalletPicker() {
     setWalletConnecting(true)
@@ -556,7 +577,7 @@ useEffect(() => {
     try {
       await hapticSelection(capabilities)
       const { address: addr } = await connectWalletProvider(option, { isInMiniApp, client: miniClient })
-      const nextIdentity = { ...identity, address: addr }
+      const nextIdentity: Identity = { address: addr }
       setIdentity(nextIdentity)
       setSelectedWalletId(option.id)
       try {
@@ -593,7 +614,7 @@ useEffect(() => {
   }
 
   async function refreshMe() {
-    if (!identity.fid && !identity.address) return
+    if (!identity.address) return
     try {
       const me = await apiMe(identity)
       setCredits(me.user.credits)
@@ -604,19 +625,17 @@ useEffect(() => {
     }
   }
 
-  async function onGenerate(isRegen = false) {
+  async function onGenerate(_isRegen = false) {
     if (!canGenerate) return
 
-    // Identity: prefer FID, otherwise wallet address.
     let id: Identity = identity
-    if (!id.fid && !id.address) {
+    if (!id.address) {
       const addr = await ensureWalletIdentity()
       if (!addr) return
-      id = { ...id, address: addr }
+      id = { address: addr }
     }
 
     const currentCredits = credits ?? 1
-
     if (currentCredits < 1) {
       toast.error('No credits left')
       return
@@ -627,7 +646,6 @@ useEffect(() => {
     setImageUrl('')
     try {
       await hapticImpact(capabilities, 'medium')
-      // No user prompt; backend uses its internal prompt strategy.
       const out = await apiGenerate(id, '')
       setResult(out.text)
       setCredits(out.credits)
@@ -651,16 +669,14 @@ useEffect(() => {
       return
     }
 
-    // Identity: prefer FID, otherwise wallet address.
     let id: Identity = identity
-    if (!id.fid && !id.address) {
+    if (!id.address) {
       const addr = await ensureWalletIdentity()
       if (!addr) return
-      id = { ...id, address: addr }
+      id = { address: addr }
     }
 
     const currentCredits = credits ?? 5
-
     if (currentCredits < 5) {
       toast.error('Need 5 credits for a photo')
       return
@@ -673,8 +689,6 @@ useEffect(() => {
     try {
       await hapticImpact(capabilities, 'medium')
       const out = await apiGenerateImage(id, result, photoStylePreset || undefined)
-      // For on-page preview, prefer inline data URLs first. They avoid host/blob/image-route
-      // mismatches while keeping imageUrl/imageId available for sharing and posting.
       const path = out.imageDataUrl || out.imageUrl || (out.imageId ? `/api/image?id=${encodeURIComponent(out.imageId)}` : '')
       setImageUrl(toAbsoluteUrl(path))
       setImageId(out.imageId || '')
@@ -709,11 +723,7 @@ useEffect(() => {
     setPosting(true)
     try {
       await hapticImpact(capabilities, 'light')
-      // Post the generated text, and include the generated image (if any).
-      // Some hosts never resolve composeCast; fire-and-forget and show toast on return.
       setPendingToast('success', 'Welcome back ✅')
-      // Prefer a public absolute URL (e.g., Vercel Blob). If we only have an internal imageId,
-      // fall back to our own API route.
       const embed = imageUrl?.startsWith('http')
         ? imageUrl
         : imageId
@@ -728,54 +738,48 @@ useEffect(() => {
     }
   }
 
-
   async function onShareForCredits() {
-	    if (!shareEligible) {
-	      toast.message('Share bonus already claimed today')
-	      return
-	    }
+    if (!shareEligible) {
+      toast.message('Share bonus already claimed today')
+      return
+    }
     setSharing(true)
     try {
       await hapticImpact(capabilities, 'medium')
 
       const shareUrl = normalizeSiteUrl(SITE_URL)
       const shareText = getRotatingShareCopy(SITE_URL)
-      // Open composer without blocking UI (some hosts never resolve composeCast).
-      // We award the +2 credits AFTER the user returns, to create a proper
-      // "done" moment in the mini app.
       setPendingToast('message', 'Welcome back ✅ Adding your share bonus…')
       try {
         sessionStorage.setItem(PENDING_SHARE_AWARD_KEY, '1')
       } catch {
         // ignore
       }
-	      void composeCast({ text: shareText, embeds: shareUrl ? [shareUrl] : undefined })
+      void composeCast({ text: shareText, embeds: shareUrl ? [shareUrl] : undefined })
 
-	      // Fallback: in some clients, the composer opens without triggering
-	      // a visibility change. Award after a short delay if we're still visible.
-	      const awardIfPending = async () => {
-	        try {
-	          setCredits((prev) => Math.max(0, (prev ?? 0) + 6))
-	          const award = await apiShareAward(identity)
-	          setCredits(award.credits)
-	          setShareEligible(false)
-	          setTodayUtc(award.todayUtc)
-	          toast.success(award.alreadyClaimed ? 'Already claimed today' : '+6 credits added 💙')
-	        } catch {
-	          // ignore
-	        }
-	      }
-	      setTimeout(() => {
-	        try {
-	          if (document.visibilityState !== 'visible') return
-	          const pending = sessionStorage.getItem(PENDING_SHARE_AWARD_KEY)
-	          if (!pending) return
-	          sessionStorage.removeItem(PENDING_SHARE_AWARD_KEY)
-	          void awardIfPending()
-	        } catch {
-	          // ignore
-	        }
-	      }, 900)
+      const awardIfPending = async () => {
+        try {
+          setCredits((prev) => Math.max(0, (prev ?? 0) + 6))
+          const award = await apiShareAward(identity)
+          setCredits(award.credits)
+          setShareEligible(false)
+          setTodayUtc(award.todayUtc)
+          toast.success(award.alreadyClaimed ? 'Already claimed today' : '+6 credits added 💙')
+        } catch {
+          // ignore
+        }
+      }
+      setTimeout(() => {
+        try {
+          if (document.visibilityState !== 'visible') return
+          const pending = sessionStorage.getItem(PENDING_SHARE_AWARD_KEY)
+          if (!pending) return
+          sessionStorage.removeItem(PENDING_SHARE_AWARD_KEY)
+          void awardIfPending()
+        } catch {
+          // ignore
+        }
+      }, 900)
     } catch (e: any) {
       if (isUserRejection(e)) return toast.message('Share cancelled')
       toast.error(e?.message || 'Share failed')
@@ -820,7 +824,6 @@ useEffect(() => {
       const action = keccak256(toHex('BASEPOSTING_GET_CREDIT'))
       const payload = toHex(
         JSON.stringify({
-          fid: identity?.fid ?? null,
           address: addr,
           ts: Date.now(),
           app: 'BasePosting',
@@ -898,8 +901,7 @@ useEffect(() => {
       }
 
       toast.message('Transaction submitted. Waiting for block confirmation...')
-      const verifyIdentity = identity?.fid ? { ...identity, address: addr } : { address: addr }
-      void verifyCreditTxInBackground(verifyIdentity, txHash)
+      void verifyCreditTxInBackground({ address: addr }, txHash)
     } catch (e: any) {
       if (isUserRejection(e)) {
         toast.message('Transaction cancelled')
@@ -914,51 +916,47 @@ useEffect(() => {
     }
   }
 
+  async function waitForCallsTxHash(
+    provider: any,
+    callsId: string,
+    opts: { timeoutMs?: number; pollMs?: number } = {},
+  ) {
+    const timeoutMs = opts.timeoutMs ?? 15000
+    const pollMs = opts.pollMs ?? 800
+    const started = Date.now()
 
-async function waitForCallsTxHash(
-  provider: any,
-  callsId: string,
-  opts: { timeoutMs?: number; pollMs?: number } = {},
-) {
-  const timeoutMs = opts.timeoutMs ?? 15000
-  const pollMs = opts.pollMs ?? 800
-  const started = Date.now()
-
-  while (Date.now() - started < timeoutMs) {
-    let status: any
-    try {
-      status = await provider.request({ method: 'wallet_getCallsStatus', params: [callsId] })
-    } catch (e: any) {
-      // 4100 is the EIP-1193 "unsupported method" code used by many wallets.
-      if (e?.code === 4100) {
-        throw new Error('Your wallet does not support wallet_getCallsStatus, so we cannot verify this batch transaction.')
+    while (Date.now() - started < timeoutMs) {
+      let status: any
+      try {
+        status = await provider.request({ method: 'wallet_getCallsStatus', params: [callsId] })
+      } catch (e: any) {
+        if (e?.code === 4100) {
+          throw new Error('Your wallet does not support wallet_getCallsStatus, so we cannot verify this batch transaction.')
+        }
+        throw e
       }
-      throw e
+
+      const code = Number(status?.status)
+      if (code === 100) {
+        await new Promise((r) => setTimeout(r, pollMs))
+        continue
+      }
+
+      if (code === 200) {
+        const receipts = status?.receipts
+        const first = Array.isArray(receipts) ? receipts[0] : receipts
+        const txHash = first?.transactionHash
+        if (!txHash) throw new Error('Batch confirmed, but no transactionHash was returned by the wallet.')
+        return txHash as string
+      }
+
+      throw new Error(`Batch failed (status ${isNaN(code) ? String(status?.status) : code}).`)
     }
 
-    const code = Number(status?.status)
-    if (code === 100) {
-      await new Promise((r) => setTimeout(r, pollMs))
-      continue
-    }
-
-    if (code === 200) {
-      const receipts = status?.receipts
-      const first = Array.isArray(receipts) ? receipts[0] : receipts
-      const txHash = first?.transactionHash
-      if (!txHash) throw new Error('Batch confirmed, but no transactionHash was returned by the wallet.')
-      return txHash as string
-    }
-
-    // 4xx/5xx/6xx are failures per Base docs / EIP-5792
-    throw new Error(`Batch failed (status ${isNaN(code) ? String(status?.status) : code}).`)
+    throw new Error('Timed out waiting for transaction confirmation.')
   }
 
-  throw new Error('Timed out waiting for transaction confirmation.')
-}
-
   async function onSendTip() {
-    // Basic guards
     const dataSuffix = (window as any).__ERC8021_DATA_SUFFIX__
     if (!isAddress(RECIPIENT)) {
       toast.error('Tip recipient is invalid')
@@ -982,18 +980,15 @@ async function waitForCallsTxHash(
     setTipStage('preparing')
     try {
       await hapticImpact(capabilities, 'medium')
-
-      // Pre-transaction UX: animate 1–1.5s BEFORE wallet opens.
       await new Promise((r) => setTimeout(r, 1200))
 
       const provider: any = await getEthereumProvider(selectedWalletId, { isInMiniApp, client: miniClient })
 
-      // Chain handling (strict): Base Mainnet only
       const chainId = (await provider.request({ method: 'eth_chainId' })) as string
       if (chainId !== '0x2105') {
         try {
           await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x2105' }] })
-        } catch (e: any) {
+        } catch {
           throw new Error('Please switch to Base Mainnet (0x2105) to send a tip.')
         }
       }
@@ -1010,18 +1005,10 @@ async function waitForCallsTxHash(
         chainId: '0x2105',
         atomicRequired: true,
         calls: [
-          {
-            to: USDC_CONTRACT,
-            value: '0x0',
-            data, // IMPORTANT: keep call data clean; wallet applies attribution via capabilities
-          },
+          { to: USDC_CONTRACT, value: '0x0', data },
         ],
         ...(dataSuffix
-          ? {
-              capabilities: {
-                dataSuffix: { value: dataSuffix, optional: true },
-              },
-            }
+          ? { capabilities: { dataSuffix: { value: dataSuffix, optional: true } } }
           : {}),
       }
 
@@ -1031,16 +1018,10 @@ async function waitForCallsTxHash(
         chainId: '0x2105',
         atomicRequired: true,
         calls: [
-          {
-            to: USDC_CONTRACT,
-            value: '0x0',
-            data: dataWithSuffix, // fallback when wallet rejects capabilities
-          },
+          { to: USDC_CONTRACT, value: '0x0', data: dataWithSuffix },
         ],
       }
 
-      // Try EIP-5792 first (best UX, can enable smart-account flows). If not supported,
-      // fall back to eth_sendTransaction.
       try {
         try {
           await provider.request({ method: 'wallet_sendCalls', params: [callsPayloadWithCaps] })
@@ -1054,7 +1035,6 @@ async function waitForCallsTxHash(
       } catch (e: any) {
         if (!isMethodNotSupported(e)) throw e
 
-        // Fallback path requires Base ETH for gas.
         const balHex = (await provider.request({ method: 'eth_getBalance', params: [addr, 'latest'] })) as string
         if (BigInt(balHex) === 0n) {
           throw new Error('This wallet cannot send batch calls here, and you have 0 Base ETH for gas. Add Base ETH and retry.')
@@ -1066,7 +1046,6 @@ async function waitForCallsTxHash(
       setTipStage('sending')
       await new Promise((r) => setTimeout(r, 500))
       setTipStage('done')
-      // We'll auto-close the modal with a nice message.
     } catch (e: any) {
       if (isUserRejection(e)) {
         toast.message('Tip cancelled')
@@ -1114,10 +1093,6 @@ async function waitForCallsTxHash(
   }
 
   const creditsLabel = credits === null ? '—' : String(credits)
-	  const userLabel =
-	    (miniUser?.displayName && String(miniUser.displayName).trim()) ||
-	    (miniUser?.username && `@${String(miniUser.username).trim()}`) ||
-	    null
 
   if (!miniLoaded) {
     return (
@@ -1151,7 +1126,7 @@ async function waitForCallsTxHash(
             />
           ) : (
             <>
-	              <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start justify-between gap-3">
                 <div>
                   <div className="flex items-center gap-2">
                     <div className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">BasePosting</div>
@@ -1162,30 +1137,18 @@ async function waitForCallsTxHash(
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400"><span>Stay consistent, Stay based, Post banger💙.</span></div>
                 </div>
 
-	                <div className="flex items-center gap-2">
-	                  {userLabel || miniUser?.pfpUrl ? (
-	                    <div className="hidden sm:flex items-center gap-2 rounded-full border border-zinc-200 bg-white/70 px-2 py-1 text-xs font-semibold text-zinc-700 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-200">
-	                      {miniUser?.pfpUrl ? (
-	                        <img
-	                          src={miniUser.pfpUrl}
-	                          alt={userLabel || 'User'}
-	                          referrerPolicy="no-referrer"
-	                          className="h-6 w-6 rounded-full object-cover"
-	                          onError={(e) => {
-	                            ;(e.currentTarget as HTMLImageElement).style.display = 'none'
-	                          }}
-	                        />
-	                      ) : null}
-	                      <span className="max-w-[160px] truncate">{userLabel || 'Farcaster user'}</span>
-	                    </div>
-	                  ) : null}
+                <div className="flex items-center gap-2">
+                  {identity.address ? (
+                    <div className="hidden sm:flex items-center gap-2 rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs font-semibold text-zinc-700 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-200">
+                      <span className="font-mono">{shortAddress(identity.address)}</span>
+                    </div>
+                  ) : null}
 
                   <Button
                     variant="ghost"
                     aria-label="Leaderboard"
                     onClick={() => setView('leaderboard')}
                   >
-                    {/* Larger + animated rainbow icon (button stays neutral) */}
                     <LeaderboardIcon className="h-8 w-8 lb-rainbow" />
                     <span className="hidden sm:inline">Leaderboard</span>
                   </Button>
@@ -1201,405 +1164,403 @@ async function waitForCallsTxHash(
                 </div>
               </div>
 
-          <Card className="mt-6">
-            <CardHeader>
-              <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{walletConnected ? 'Generate Post' : 'Connect wallet first.'}</div>
-				<div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">╰┈➤</div>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-col gap-3">
-                <Button
-                  className="w-full"
-                  variant="primary"
-                  isLoading={generating}
-                  disabled={!canGenerate}
-                  onClick={() => void onGenerate(false)}
-                >
-                  <Sparkles className="h-4 w-4" />
-                  {generating ? 'Working…' : 'Generate (-1c)'}
-                </Button>
+              <Card className="mt-6">
+                <CardHeader>
+                  <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{walletConnected ? 'Generate Post' : 'Connect wallet first.'}</div>
+                  <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">╰┈➤</div>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex flex-col gap-3">
+                    <Button
+                      className="w-full"
+                      variant="primary"
+                      isLoading={generating}
+                      disabled={!canGenerate}
+                      onClick={() => void onGenerate(false)}
+                    >
+                      <Sparkles className="h-4 w-4" />
+                      {generating ? 'Working…' : 'Generate (-1c)'}
+                    </Button>
 
-                <div className="flex flex-col gap-2 sm:flex-row">
-	                  <Button
-	                    variant="secondary"
-	                    isLoading={walletConnecting}
-	                    onClick={() => void onCreateWallet()}
-	                    disabled={!miniLoaded}
-	                    className="w-full sm:w-auto"
-	                  >
-	                    <Wallet className="h-4 w-4" />
-	                    {identity.address ? shortAddress(identity.address) : 'Connect Wallet'}
-	                  </Button>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Button
+                        variant="secondary"
+                        isLoading={walletConnecting}
+                        onClick={() => void onCreateWallet()}
+                        disabled={!miniLoaded}
+                        className="w-full sm:w-auto"
+                      >
+                        <Wallet className="h-4 w-4" />
+                        {identity.address ? shortAddress(identity.address) : 'Connect Wallet'}
+                      </Button>
 
-                  <Button
-                    variant="secondary"
-                    isLoading={gettingCredit}
-                    onClick={() => void onGetCredit()}
-                    disabled={!miniLoaded || !walletConnected}
-                    className="w-full sm:w-auto"
-                  >
-                    <Wallet className="h-4 w-4" />
-                    Get Credit
-                  </Button>
+                      <Button
+                        variant="secondary"
+                        isLoading={gettingCredit}
+                        onClick={() => void onGetCredit()}
+                        disabled={!miniLoaded || !walletConnected}
+                        className="w-full sm:w-auto"
+                      >
+                        <Wallet className="h-4 w-4" />
+                        Get Credit
+                      </Button>
 
-                  <Button
-                    variant="ghost"
-                    isLoading={sharing}
-                    onClick={() => void onShareForCredits()}
-                    disabled={!shareEligible || !walletConnected}
-                    className="w-full sm:w-auto"
-                  >
-                    <Send className="h-4 w-4" />
-                    Share for 6 credit
-                  </Button>
+                      <Button
+                        variant="ghost"
+                        isLoading={sharing}
+                        onClick={() => void onShareForCredits()}
+                        disabled={!shareEligible || !walletConnected}
+                        className="w-full sm:w-auto"
+                      >
+                        <Send className="h-4 w-4" />
+                        Share for 6 credit
+                      </Button>
 
-                  <Button
-                    variant="ghost"
-                    onClick={() => setTipOpen(true)}
-                    disabled={!miniLoaded}
-                    className="w-full sm:w-auto"
-                  >
-                    <HandCoins className="h-4 w-4" />
-                    Tip Me
-                  </Button>
-                </div>
-              </div>
-
-              {!shareEligible && todayUtc ? (
-                <div className="mt-3 text-xs text-zinc-600 dark:text-zinc-400">Share bonus already claimed for UTC {todayUtc}.</div>
-              ) : null}
-            </CardContent>
-          </Card>
-
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.2 }}
-          >
-            <Card className="mt-6">
-              {/* Extra bottom padding so the CTA doesn't feel stuck to the content below */}
-              <CardHeader className="pb-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Basepost</div>
-                    <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-                      Photo style: <span className="font-semibold text-zinc-900 dark:text-zinc-100">{photoStyleLabel}</span>
+                      <Button
+                        variant="ghost"
+                        onClick={() => setTipOpen(true)}
+                        disabled={!miniLoaded}
+                        className="w-full sm:w-auto"
+                      >
+                        <HandCoins className="h-4 w-4" />
+                        Tip Me
+                      </Button>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0 -mt-0.5">
-                    <button
-                      onClick={() => setPhotoStyleOpen(true)}
-                      className="rounded-2xl p-2 text-zinc-700 transition hover:bg-zinc-100 active:scale-[0.98] dark:text-zinc-200 dark:hover:bg-zinc-900"
-                      aria-label="Choose photo style"
-                      title="Choose photo style"
-                    >
-                      <Palette className="h-7 w-7 lb-rainbow" />
-                    </button>
+                  {!shareEligible && todayUtc ? (
+                    <div className="mt-3 text-xs text-zinc-600 dark:text-zinc-400">Share bonus already claimed for UTC {todayUtc}.</div>
+                  ) : null}
+                </CardContent>
+              </Card>
 
-                    <motion.div
-                      animate={
-                        result
-                          ? { scale: [1, 1.06, 1], y: [0, -1, 0] }
-                          : { scale: 1, y: 0 }
-                      }
-                      transition={
-                        result
-                          ? { duration: 0.9, repeat: Infinity, repeatDelay: 1.2, ease: 'easeInOut' }
-                          : { duration: 0 }
-                      }
-                    >
-                      <Button
-                        variant={result ? 'success' : 'attention'}
-                        isLoading={generatingImage}
-                        disabled={!result || generating || posting}
-                        onClick={() => void onGeneratePhoto()}
-                        className="px-5 py-2.5 text-sm"
-                      >
-                        <ImageIcon className="h-4 w-4" />
-                        Generate Photo (-5c)
-                      </Button>
-                    </motion.div>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {generatingImage ? (
-                  <div className="mb-3">
-                    <Skeleton className="w-full rounded-2xl" style={{ height: 240 }} />
-                  </div>
-                ) : imageUrl ? (
-                  <div className="mb-3">
-                    <img
-                      src={imageUrl}
-                      alt="Generated"
-                      className="w-full rounded-2xl border border-zinc-200 bg-white object-cover dark:border-zinc-800 dark:bg-zinc-950"
-                      style={{ aspectRatio: '4 / 3' }}
-                      loading="eager"
-                      decoding="async"
-                      referrerPolicy="no-referrer"
-                      onLoad={() => setImageError(false)}
-                      onError={() => setImageError(true)}
-                    />
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2 }}
+              >
+                <Card className="mt-6">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Basepost</div>
+                        <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                          Photo style: <span className="font-semibold text-zinc-900 dark:text-zinc-100">{photoStyleLabel}</span>
+                        </div>
+                      </div>
 
-                    {imageError ? (
-                      <div className="mt-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-900 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
-                        Couldn’t load the generated image.
+                      <div className="flex items-center gap-2 shrink-0 -mt-0.5">
                         <button
-                          className="ml-2 underline underline-offset-2"
-                          onClick={() => {
-                            setImageError(false)
-                            setImageUrl((prev) => {
-                              if (!prev) return prev
-                              if (prev.startsWith('data:')) return prev
-                              return `${prev}${prev.includes('?') ? '&' : '?'}cb=${Date.now()}`
-                            })
-                          }}
+                          onClick={() => setPhotoStyleOpen(true)}
+                          className="rounded-2xl p-2 text-zinc-700 transition hover:bg-zinc-100 active:scale-[0.98] dark:text-zinc-200 dark:hover:bg-zinc-900"
+                          aria-label="Choose photo style"
+                          title="Choose photo style"
                         >
-                          Retry
+                          <Palette className="h-7 w-7 lb-rainbow" />
                         </button>
+
+                        <motion.div
+                          animate={
+                            result
+                              ? { scale: [1, 1.06, 1], y: [0, -1, 0] }
+                              : { scale: 1, y: 0 }
+                          }
+                          transition={
+                            result
+                              ? { duration: 0.9, repeat: Infinity, repeatDelay: 1.2, ease: 'easeInOut' }
+                              : { duration: 0 }
+                          }
+                        >
+                          <Button
+                            variant={result ? 'success' : 'attention'}
+                            isLoading={generatingImage}
+                            disabled={!result || generating || posting}
+                            onClick={() => void onGeneratePhoto()}
+                            className="px-5 py-2.5 text-sm"
+                          >
+                            <ImageIcon className="h-4 w-4" />
+                            Generate Photo (-5c)
+                          </Button>
+                        </motion.div>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    {generatingImage ? (
+                      <div className="mb-3">
+                        <Skeleton className="w-full rounded-2xl" style={{ height: 240 }} />
+                      </div>
+                    ) : imageUrl ? (
+                      <div className="mb-3">
+                        <img
+                          src={imageUrl}
+                          alt="Generated"
+                          className="w-full rounded-2xl border border-zinc-200 bg-white object-cover dark:border-zinc-800 dark:bg-zinc-950"
+                          style={{ aspectRatio: '4 / 3' }}
+                          loading="eager"
+                          decoding="async"
+                          referrerPolicy="no-referrer"
+                          onLoad={() => setImageError(false)}
+                          onError={() => setImageError(true)}
+                        />
+
+                        {imageError ? (
+                          <div className="mt-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-900 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
+                            Couldn’t load the generated image.
+                            <button
+                              className="ml-2 underline underline-offset-2"
+                              onClick={() => {
+                                setImageError(false)
+                                setImageUrl((prev) => {
+                                  if (!prev) return prev
+                                  if (prev.startsWith('data:')) return prev
+                                  return `${prev}${prev.includes('?') ? '&' : '?'}cb=${Date.now()}`
+                                })
+                              }}
+                            >
+                              Retry
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
                     ) : null}
-                  </div>
-                ) : null}
 
-                {generating ? (
-                  <div className="space-y-3">
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-11/12" />
-                    <Skeleton className="h-4 w-4/5" />
-                  </div>
-                ) : result ? (
-                  <div className="whitespace-pre-wrap rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
-                    {result}
-                  </div>
-                ) : (
-                  <div className="text-sm text-zinc-600 dark:text-zinc-400">Hit Generate to see your post here ⌯⌲</div>
-                )}
+                    {generating ? (
+                      <div className="space-y-3">
+                        <Skeleton className="h-4 w-full" />
+                        <Skeleton className="h-4 w-11/12" />
+                        <Skeleton className="h-4 w-4/5" />
+                      </div>
+                    ) : result ? (
+                      <div className="whitespace-pre-wrap rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
+                        {result}
+                      </div>
+                    ) : (
+                      <div className="text-sm text-zinc-600 dark:text-zinc-400">Hit Generate to see your post here ⌯⌲</div>
+                    )}
 
-                <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-                  <Button
-                    variant="primary"
-                    isLoading={posting}
-                    disabled={!result}
-                    onClick={() => void onPostDirectly()}
-                    className="w-full sm:w-auto"
-                  >
-                    <Send className="h-4 w-4" />
-                    Post Directly
-                  </Button>
+                    <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                      <Button
+                        variant="primary"
+                        isLoading={posting}
+                        disabled={!result}
+                        onClick={() => void onPostDirectly()}
+                        className="w-full sm:w-auto"
+                      >
+                        <Send className="h-4 w-4" />
+                        Post Directly
+                      </Button>
 
-                  <Button
-                    variant="secondary"
-                    disabled={!result}
-                    onClick={() => void onCopy()}
-                    className="w-full sm:w-auto"
-                  >
-                    <Copy className="h-4 w-4" />
-                    Copy
-                  </Button>
-                </div>
-
-                {!identity.fid && !identity.address ? (
-                  <div className="mt-4 rounded-xl border border-yellow-200 bg-yellow-50 p-3 text-xs text-yellow-900 dark:border-yellow-900/40 dark:bg-yellow-950/30 dark:text-yellow-200">
-                    Your Farcaster identity wasn’t available. Connect wallet to keep credits tied to you.
-                    <div className="mt-2">
-                      <Button variant="secondary" onClick={() => void ensureWalletIdentity()}>
-                        <Wallet className="h-4 w-4" />
-                        Connect Wallet
+                      <Button
+                        variant="secondary"
+                        disabled={!result}
+                        onClick={() => void onCopy()}
+                        className="w-full sm:w-auto"
+                      >
+                        <Copy className="h-4 w-4" />
+                        Copy
                       </Button>
                     </div>
-                  </div>
-                ) : null}
-              </CardContent>
-            </Card>
-          </motion.div>
 
-          {photoStyleOpen ? (
-            <div className="fixed inset-0 z-50">
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="absolute inset-0 bg-black/50"
-                onClick={() => setPhotoStyleOpen(false)}
-              />
+                    {!identity.address ? (
+                      <div className="mt-4 rounded-xl border border-yellow-200 bg-yellow-50 p-3 text-xs text-yellow-900 dark:border-yellow-900/40 dark:bg-yellow-950/30 dark:text-yellow-200">
+                        Connect your wallet to keep credits tied to you.
+                        <div className="mt-2">
+                          <Button variant="secondary" onClick={() => void ensureWalletIdentity()}>
+                            <Wallet className="h-4 w-4" />
+                            Connect Wallet
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              </motion.div>
 
-              <motion.div
-                initial={{ y: 32, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                exit={{ y: 32, opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-2xl rounded-t-3xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Photo style</div>
-                    <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-                      Pick a style, or keep default. (Current: <span className="font-semibold">{photoStyleLabel}</span>)
-                    </div>
-                  </div>
-                  <button
-                    className="rounded-xl p-2 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+              {photoStyleOpen ? (
+                <div className="fixed inset-0 z-50">
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="absolute inset-0 bg-black/50"
                     onClick={() => setPhotoStyleOpen(false)}
-                    aria-label="Close"
+                  />
+
+                  <motion.div
+                    initial={{ y: 32, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    exit={{ y: 32, opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-2xl rounded-t-3xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
                   >
-                    <X className="h-4 w-4" />
-                  </button>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Photo style</div>
+                        <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                          Pick a style, or keep default. (Current: <span className="font-semibold">{photoStyleLabel}</span>)
+                        </div>
+                      </div>
+                      <button
+                        className="rounded-xl p-2 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                        onClick={() => setPhotoStyleOpen(false)}
+                        aria-label="Close"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-2 gap-2 max-h-[48vh] overflow-auto pr-1">
+                      <button
+                        onClick={() => {
+                          void hapticSelection(capabilities)
+                          setAndPersistPhotoStyle(null)
+                          setPhotoStyleOpen(false)
+                          toast.message('Using default style')
+                        }}
+                        className={`rounded-2xl border px-3 py-3 text-left transition active:scale-[0.98] ${
+                          !photoStylePreset
+                            ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
+                            : 'border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900'
+                        }`}
+                      >
+                        <div className="text-sm font-semibold">Default</div>
+                        <div className="mt-0.5 text-xs opacity-80">Use server env default</div>
+                      </button>
+
+                      {PHOTO_STYLE_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.key}
+                          onClick={() => {
+                            void hapticSelection(capabilities)
+                            setAndPersistPhotoStyle(opt.key)
+                            setPhotoStyleOpen(false)
+                            toast.message(`Style: ${opt.label}`)
+                          }}
+                          className={`rounded-2xl border px-3 py-3 text-left transition active:scale-[0.98] ${
+                            photoStylePreset === opt.key
+                              ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
+                              : 'border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900'
+                          }`}
+                        >
+                          <div className="text-sm font-semibold">{opt.label}</div>
+                          <div className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">{opt.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="mt-3 text-xs text-zinc-500 dark:text-zinc-500">
+                      Tip: If you select nothing, the server will use default.
+                    </div>
+                  </motion.div>
                 </div>
+              ) : null}
 
-                <div className="mt-4 grid grid-cols-2 gap-2 max-h-[48vh] overflow-auto pr-1">
-                  <button
-                    onClick={() => {
-                      void hapticSelection(capabilities)
-                      setAndPersistPhotoStyle(null)
-                      setPhotoStyleOpen(false)
-                      toast.message('Using default style')
-                    }}
-                    className={`rounded-2xl border px-3 py-3 text-left transition active:scale-[0.98] ${
-                      !photoStylePreset
-                        ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
-                        : 'border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900'
-                    }`}
-                  >
-                    <div className="text-sm font-semibold">Default</div>
-                    <div className="mt-0.5 text-xs opacity-80">Use server env default</div>
-                  </button>
-
-                  {PHOTO_STYLE_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.key}
-                      onClick={() => {
-                        void hapticSelection(capabilities)
-                        setAndPersistPhotoStyle(opt.key)
-                        setPhotoStyleOpen(false)
-                        toast.message(`Style: ${opt.label}`)
-                      }}
-                      className={`rounded-2xl border px-3 py-3 text-left transition active:scale-[0.98] ${
-                        photoStylePreset === opt.key
-                          ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
-                          : 'border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900'
-                      }`}
-                    >
-                      <div className="text-sm font-semibold">{opt.label}</div>
-                      <div className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">{opt.desc}</div>
-                    </button>
-                  ))}
-                </div>
-
-                <div className="mt-3 text-xs text-zinc-500 dark:text-zinc-500">
-                  Tip: If you select nothing, the server will use default.
-                </div>
-              </motion.div>
-            </div>
-          ) : null}
-
-          {tipOpen ? (
-            <div className="fixed inset-0 z-50">
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="absolute inset-0 bg-black/50"
-                onClick={() => closeTip()}
-              />
-
-              <motion.div
-                initial={{ y: 32, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                exit={{ y: 32, opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-2xl rounded-t-3xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Tip with USDC</div>
-                    <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Network: Base Mainnet • Token: USDC</div>
-                  </div>
-                  <button
-                    className="rounded-xl p-2 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+              {tipOpen ? (
+                <div className="fixed inset-0 z-50">
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="absolute inset-0 bg-black/50"
                     onClick={() => closeTip()}
-                    aria-label="Close"
+                  />
+
+                  <motion.div
+                    initial={{ y: 32, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    exit={{ y: 32, opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-2xl rounded-t-3xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
                   >
-                    <X className="h-4 w-4" />
-                  </button>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Tip with USDC</div>
+                        <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Network: Base Mainnet • Token: USDC</div>
+                      </div>
+                      <button
+                        className="rounded-xl p-2 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                        onClick={() => closeTip()}
+                        aria-label="Close"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    {tipStage === 'done' ? (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.25 }}
+                        className="mt-8 flex flex-col items-center text-center"
+                      >
+                        <motion.div
+                          initial={{ scale: 0.85 }}
+                          animate={{ scale: 1 }}
+                          transition={{ type: 'spring', stiffness: 260, damping: 16 }}
+                          className="flex h-14 w-14 items-center justify-center rounded-full border border-zinc-200 bg-zinc-50 text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
+                        >
+                          <HandCoins className="h-6 w-6" />
+                        </motion.div>
+                        <div className="mt-4 text-base font-semibold text-zinc-900 dark:text-zinc-100">Tip sent 💙</div>
+                        <div className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Thank you. You’re making this mini app better.</div>
+                        <div className="mt-4 text-xs text-zinc-500 dark:text-zinc-500">Closing…</div>
+                      </motion.div>
+                    ) : (
+                      <>
+                        <div className="mt-4 grid grid-cols-4 gap-2">
+                          {[100, 250, 500, 1000].map((v) => (
+                            <button
+                              key={v}
+                              onClick={() => setTipUsd(String(v))}
+                              className={`rounded-2xl border px-3 py-2 text-sm font-semibold transition active:scale-[0.98] ${
+                                String(v) === String(tipUsd)
+                                  ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
+                                  : 'border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900'
+                              }`}
+                            >
+                              ${v}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="mt-3">
+                          <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Custom amount (USD)</label>
+                          <input
+                            value={tipUsd}
+                            onChange={(e) => setTipUsd(e.target.value)}
+                            inputMode="decimal"
+                            placeholder="500"
+                            className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none transition focus:border-zinc-400 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-zinc-600"
+                          />
+                        </div>
+
+                        <div className="mt-4">
+                          <Button
+                            variant="primary"
+                            className="w-full"
+                            isLoading={tipStage === 'preparing' || tipStage === 'confirm' || tipStage === 'sending'}
+                            disabled={tipStage !== 'idle'}
+                            onClick={() => void onSendTip()}
+                          >
+                            <HandCoins className="h-4 w-4" />
+                            {tipStage === 'idle'
+                              ? 'Send USDC'
+                              : tipStage === 'preparing'
+                                ? 'Preparing tip…'
+                                : tipStage === 'confirm'
+                                  ? 'Confirm in wallet'
+                                  : 'Sending…'}
+                          </Button>
+                          <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+                            Recipient: <span className="font-mono">{shortAddress(RECIPIENT)}</span>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </motion.div>
                 </div>
-
-	                {tipStage === 'done' ? (
-	                  <motion.div
-	                    initial={{ opacity: 0, y: 10 }}
-	                    animate={{ opacity: 1, y: 0 }}
-	                    transition={{ duration: 0.25 }}
-	                    className="mt-8 flex flex-col items-center text-center"
-	                  >
-	                    <motion.div
-	                      initial={{ scale: 0.85 }}
-	                      animate={{ scale: 1 }}
-	                      transition={{ type: 'spring', stiffness: 260, damping: 16 }}
-	                      className="flex h-14 w-14 items-center justify-center rounded-full border border-zinc-200 bg-zinc-50 text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
-	                    >
-	                      <HandCoins className="h-6 w-6" />
-	                    </motion.div>
-	                    <div className="mt-4 text-base font-semibold text-zinc-900 dark:text-zinc-100">Tip sent 💙</div>
-	                    <div className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Thank you. You’re making this mini app better.</div>
-	                    <div className="mt-4 text-xs text-zinc-500 dark:text-zinc-500">Closing…</div>
-	                  </motion.div>
-	                ) : (
-	                  <>
-	                    <div className="mt-4 grid grid-cols-4 gap-2">
-	                      {[100, 250, 500, 1000].map((v) => (
-	                        <button
-	                          key={v}
-	                          onClick={() => setTipUsd(String(v))}
-	                          className={`rounded-2xl border px-3 py-2 text-sm font-semibold transition active:scale-[0.98] ${
-	                            String(v) === String(tipUsd)
-	                              ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
-	                              : 'border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900'
-	                          }`}
-	                        >
-	                          ${v}
-	                        </button>
-	                      ))}
-	                    </div>
-
-	                    <div className="mt-3">
-	                      <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Custom amount (USD)</label>
-	                      <input
-	                        value={tipUsd}
-	                        onChange={(e) => setTipUsd(e.target.value)}
-	                        inputMode="decimal"
-	                        placeholder="500"
-	                        className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none transition focus:border-zinc-400 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-zinc-600"
-	                      />
-	                    </div>
-
-	                    <div className="mt-4">
-	                      <Button
-	                        variant="primary"
-	                        className="w-full"
-	                        isLoading={tipStage === 'preparing' || tipStage === 'confirm' || tipStage === 'sending'}
-	                        disabled={tipStage !== 'idle'}
-	                        onClick={() => void onSendTip()}
-	                      >
-	                        <HandCoins className="h-4 w-4" />
-	                        {tipStage === 'idle'
-	                          ? 'Send USDC'
-	                          : tipStage === 'preparing'
-	                            ? 'Preparing tip…'
-	                            : tipStage === 'confirm'
-	                              ? 'Confirm in wallet'
-	                              : 'Sending…'}
-	                      </Button>
-	                      <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
-	                        Recipient: <span className="font-mono">{shortAddress(RECIPIENT)}</span>
-	                      </div>
-	                    </div>
-	                  </>
-	                )}
-              </motion.div>
-            </div>
-          ) : null}
-
+              ) : null}
             </>
           )}
 
@@ -1608,7 +1569,6 @@ async function waitForCallsTxHash(
           </div>
         </div>
       </div>
-
 
       {walletModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
@@ -1684,7 +1644,6 @@ async function waitForCallsTxHash(
         </div>
       ) : null}
 
-      {/* Floating notifications / roadmap */}
       <RoadmapBell />
     </div>
   )
