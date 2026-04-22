@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Copy, Moon, Send, Sparkles, Sun, Wallet, HandCoins, X, Image as ImageIcon, Palette } from 'lucide-react'
 import { getAddress, isAddress, parseUnits, encodeFunctionData, keccak256, toHex } from 'viem'
@@ -185,9 +185,35 @@ function raceWithTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> 
   })
 }
 
-// ---------------------------------------------------------------------------
+// Module-level constants (no re-creation, no useMemo needed)
+const PHOTO_STYLE_OPTIONS = [
+  { key: 'storybook', label: 'Storybook', desc: "Hand-drawn, kids-book watercolor (default vibe)" },
+  { key: 'modern', label: 'Modern', desc: 'Clean, minimal, editorial illustration' },
+  { key: 'realistic', label: 'Realistic', desc: 'Photoreal look (natural light)' },
+  { key: 'cinematic', label: 'Cinematic', desc: 'Dramatic lighting, depth, movie still' },
+  { key: 'anime', label: 'Anime', desc: 'Anime illustration, clean lines, soft shading' },
+  { key: 'comic', label: 'Comic', desc: 'Comic book / inked outlines, punchy shadows' },
+  { key: 'pixel', label: 'Pixel', desc: 'Pixel art, retro game style' },
+  { key: 'isometric', label: 'Isometric', desc: 'Isometric world / diorama' },
+  { key: 'clay', label: 'Clay', desc: 'Claymation / soft 3D clay look' },
+  { key: '3d', label: '3D Render', desc: 'Tasteful 3D render (not plastic)' },
+  { key: 'noir', label: 'Noir', desc: 'Black & white noir, moody contrast' },
+  { key: 'cyberpunk', label: 'Cyberpunk', desc: 'Neon sci-fi city vibe (controlled)' },
+  { key: 'vaporwave', label: 'Vaporwave', desc: 'Retro-futuristic gradients + glow' },
+  { key: 'oil', label: 'Oil Painting', desc: 'Classic oil paint strokes' },
+  { key: 'watercolor', label: 'Watercolor', desc: 'Soft watercolor wash, paper texture' },
+  { key: 'pencil', label: 'Pencil Sketch', desc: 'Graphite sketch / cross-hatching' },
+  { key: 'ink', label: 'Ink Wash', desc: 'Ink wash + brush texture' },
+  { key: 'lowpoly', label: 'Low Poly', desc: 'Low-poly geometric 3D' },
+] as const
+
+function labelForPhotoStyle(preset: string | null): string {
+  if (!preset) return 'Default (from env)'
+  const f = PHOTO_STYLE_OPTIONS.find((o) => o.key === preset)
+  return f ? f.label : preset
+}
+
 // LoadingLabel — memoized; no hooks run when idle.
-// ---------------------------------------------------------------------------
 const LoadingLabel = React.memo(function LoadingLabel(props: {
   active: boolean
   estimateSec: number
@@ -245,60 +271,6 @@ const LoadingLabel = React.memo(function LoadingLabel(props: {
   )
 })
 
-// ---------------------------------------------------------------------------
-// Basepost card header — memoized separately so it doesn't re-render when
-// unrelated parent state changes. This kills the "photo button / header row"
-// blink we saw in Base app.
-// ---------------------------------------------------------------------------
-type PhotoStyleOption = { key: string; label: string; desc: string }
-
-const BasepostHeader = React.memo(function BasepostHeader(props: {
-  photoStyleLabel: string
-  generatingImage: boolean
-  photoDisabled: boolean
-  onOpenStyle: () => void
-  onGeneratePhoto: () => void
-}) {
-  return (
-    <div className="flex items-start justify-between gap-3">
-      <div>
-        <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Basepost</div>
-        <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-          Photo style: <span className="font-semibold text-zinc-900 dark:text-zinc-100">{props.photoStyleLabel}</span>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-2 shrink-0 -mt-0.5">
-        <button
-          onClick={props.onOpenStyle}
-          className="rounded-2xl p-2 text-zinc-700 transition hover:bg-zinc-100 active:scale-[0.98] dark:text-zinc-200 dark:hover:bg-zinc-900"
-          aria-label="Choose photo style"
-          title="Choose photo style"
-        >
-          <Palette className="h-7 w-7 lb-rainbow" />
-        </button>
-
-        {/* IMPORTANT: variant is fixed to "success" forever to prevent
-            re-style flicker in Base app. Disabled state alone gates usage. */}
-        <Button
-          variant="success"
-          isLoading={false}
-          disabled={props.photoDisabled}
-          onClick={props.onGeneratePhoto}
-          className="px-5 py-2.5 text-sm"
-        >
-          <LoadingLabel
-            active={props.generatingImage}
-            estimateSec={35}
-            idleText="Generate Photo (-5c)"
-            icon={<ImageIcon className="h-4 w-4" />}
-          />
-        </Button>
-      </div>
-    </div>
-  )
-})
-
 export default function App() {
   const [mounted, setMounted] = useState(false)
   const [dark, setDark] = useState(true)
@@ -346,6 +318,25 @@ export default function App() {
   const [tipUsd, setTipUsd] = useState('500')
   const [tipStage, setTipStage] = useState<'idle' | 'preparing' | 'confirm' | 'sending' | 'done'>('idle')
 
+  // Refs for values used in callbacks — avoids stale-closure + unnecessary
+  // re-creation of handler functions (which triggers child re-renders).
+  const identityRef = useRef<Identity>(identity)
+  identityRef.current = identity
+  const creditsRef = useRef<number | null>(credits)
+  creditsRef.current = credits
+  const resultRef = useRef<string>(result)
+  resultRef.current = result
+  const capabilitiesRef = useRef<string[]>(capabilities)
+  capabilitiesRef.current = capabilities
+  const miniClientRef = useRef<any>(miniClient)
+  miniClientRef.current = miniClient
+  const isInMiniAppRef = useRef<boolean>(isInMiniApp)
+  isInMiniAppRef.current = isInMiniApp
+  const selectedWalletIdRef = useRef<string>(selectedWalletId)
+  selectedWalletIdRef.current = selectedWalletId
+  const photoStylePresetRef = useRef<string | null>(photoStylePreset)
+  photoStylePresetRef.current = photoStylePreset
+
   const PENDING_TOAST_KEY = 'bp_pending_toast_v1'
   const PENDING_SHARE_AWARD_KEY = 'bp_pending_share_award_v1'
 
@@ -369,37 +360,8 @@ export default function App() {
   }
 
   const walletConnected = Boolean(identity.address)
-  const canGenerate = useMemo(() => !generating && miniLoaded && walletConnected, [generating, miniLoaded, walletConnected])
-
-  const PHOTO_STYLE_OPTIONS: PhotoStyleOption[] = useMemo(
-    () => [
-      { key: 'storybook', label: 'Storybook', desc: "Hand-drawn, kids-book watercolor (default vibe)" },
-      { key: 'modern', label: 'Modern', desc: 'Clean, minimal, editorial illustration' },
-      { key: 'realistic', label: 'Realistic', desc: 'Photoreal look (natural light)' },
-      { key: 'cinematic', label: 'Cinematic', desc: 'Dramatic lighting, depth, movie still' },
-      { key: 'anime', label: 'Anime', desc: 'Anime illustration, clean lines, soft shading' },
-      { key: 'comic', label: 'Comic', desc: 'Comic book / inked outlines, punchy shadows' },
-      { key: 'pixel', label: 'Pixel', desc: 'Pixel art, retro game style' },
-      { key: 'isometric', label: 'Isometric', desc: 'Isometric world / diorama' },
-      { key: 'clay', label: 'Clay', desc: 'Claymation / soft 3D clay look' },
-      { key: '3d', label: '3D Render', desc: 'Tasteful 3D render (not plastic)' },
-      { key: 'noir', label: 'Noir', desc: 'Black & white noir, moody contrast' },
-      { key: 'cyberpunk', label: 'Cyberpunk', desc: 'Neon sci-fi city vibe (controlled)' },
-      { key: 'vaporwave', label: 'Vaporwave', desc: 'Retro-futuristic gradients + glow' },
-      { key: 'oil', label: 'Oil Painting', desc: 'Classic oil paint strokes' },
-      { key: 'watercolor', label: 'Watercolor', desc: 'Soft watercolor wash, paper texture' },
-      { key: 'pencil', label: 'Pencil Sketch', desc: 'Graphite sketch / cross-hatching' },
-      { key: 'ink', label: 'Ink Wash', desc: 'Ink wash + brush texture' },
-      { key: 'lowpoly', label: 'Low Poly', desc: 'Low-poly geometric 3D' },
-    ],
-    []
-  )
-
-  const photoStyleLabel = useMemo(() => {
-    if (!photoStylePreset) return 'Default (from env)'
-    const f = PHOTO_STYLE_OPTIONS.find((o) => o.key === photoStylePreset)
-    return f ? f.label : photoStylePreset
-  }, [photoStylePreset, PHOTO_STYLE_OPTIONS])
+  const canGenerate = !generating && miniLoaded && walletConnected
+  const photoStyleLabel = labelForPhotoStyle(photoStylePreset)
 
   function setAndPersistPhotoStyle(next: string | null) {
     setPhotoStylePreset(next)
@@ -452,7 +414,8 @@ export default function App() {
       setSharing(false)
       setPosting(false)
 
-      if (miniLoaded && identity.address) {
+      const id = identityRef.current
+      if (miniLoaded && id.address) {
         void (async () => {
           let handledShareAward = false
           try {
@@ -462,7 +425,7 @@ export default function App() {
               shareAwardInFlight.current = true
               handledShareAward = true
               setCredits((prev) => Math.max(0, (prev ?? 0) + 6))
-              const award = await apiShareAward(identity)
+              const award = await apiShareAward(id)
               setCredits(award.credits)
               setShareEligible(false)
               setTodayUtc(award.todayUtc)
@@ -476,7 +439,7 @@ export default function App() {
 
           if (!handledShareAward) {
             try {
-              const me = await apiMe(identity)
+              const me = await apiMe(id)
               setCredits(me.user.credits)
               setShareEligible(me.share.canClaimToday)
               setTodayUtc(me.share.todayUtc)
@@ -509,7 +472,7 @@ export default function App() {
       document.removeEventListener('visibilitychange', onReturn)
       window.removeEventListener('focus', onReturn)
     }
-  }, [identity.address, miniLoaded])
+  }, [miniLoaded])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -744,14 +707,19 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [miniLoaded, identity.address])
 
-  async function onCreateWallet() {
-    await openWalletPicker()
-  }
+  // ==========================================================================
+  // Handlers — use refs for deps so their identity is STABLE between renders.
+  // That way child components (BasepostHeader, etc.) never re-render from a
+  // parent state change they don't care about.
+  // ==========================================================================
 
-  async function openWalletPicker() {
+  const openWalletPicker = useCallback(async () => {
     setWalletConnecting(true)
     try {
-      const found = await listAvailableWallets({ isInMiniApp, client: miniClient })
+      const found = await listAvailableWallets({
+        isInMiniApp: isInMiniAppRef.current,
+        client: miniClientRef.current,
+      })
       const seen = new Set<string>()
       const clean = found.filter((w) => {
         const key = `${w.source}:${(w.providerKey || w.rdns || w.name).toLowerCase()}`
@@ -769,19 +737,26 @@ export default function App() {
     } finally {
       setWalletConnecting(false)
     }
-  }
+  }, [])
 
-  async function ensureWalletIdentity() {
-    if (identity.address) return identity.address
+  const onCreateWallet = useCallback(async () => {
+    await openWalletPicker()
+  }, [openWalletPicker])
+
+  const ensureWalletIdentity = useCallback(async () => {
+    if (identityRef.current.address) return identityRef.current.address
     await openWalletPicker()
     return null
-  }
+  }, [openWalletPicker])
 
-  async function connectWallet(option: WalletOption) {
+  const connectWallet = useCallback(async (option: WalletOption) => {
     setWalletConnecting(true)
     try {
-      await hapticSelection(capabilities)
-      const { address: addr } = await connectWalletProvider(option, { isInMiniApp, client: miniClient })
+      await hapticSelection(capabilitiesRef.current)
+      const { address: addr } = await connectWalletProvider(option, {
+        isInMiniApp: isInMiniAppRef.current,
+        client: miniClientRef.current,
+      })
       const nextIdentity: Identity = { address: addr }
       setIdentity(nextIdentity)
       setSelectedWalletId(option.id)
@@ -816,31 +791,32 @@ export default function App() {
     } finally {
       setWalletConnecting(false)
     }
-  }
+  }, [])
 
-  async function refreshMe() {
-    if (!identity.address) return
+  const refreshMe = useCallback(async () => {
+    const id = identityRef.current
+    if (!id.address) return
     try {
-      const me = await apiMe(identity)
+      const me = await apiMe(id)
       setCredits(me.user.credits)
       setShareEligible(me.share.canClaimToday)
       setTodayUtc(me.share.todayUtc)
     } catch {
       // ignore
     }
-  }
+  }, [])
 
-  async function onGenerate(_isRegen = false) {
-    if (!canGenerate) return
+  const onGenerate = useCallback(async () => {
+    if (generating || !miniLoaded) return
 
-    let id: Identity = identity
+    let id = identityRef.current
     if (!id.address) {
       const addr = await ensureWalletIdentity()
       if (!addr) return
       id = { address: addr }
     }
 
-    const currentCredits = credits ?? 1
+    const currentCredits = creditsRef.current ?? 1
     if (currentCredits < 1) {
       toast.error('No credits left')
       return
@@ -850,7 +826,7 @@ export default function App() {
     setResult('')
     setImageUrl('')
     try {
-      await hapticImpact(capabilities, 'medium')
+      await hapticImpact(capabilitiesRef.current, 'medium')
       const out = await apiGenerate(id, '')
       setResult(out.text)
       setCredits(out.credits)
@@ -866,22 +842,23 @@ export default function App() {
     } finally {
       setGenerating(false)
     }
-  }
+  }, [generating, miniLoaded, ensureWalletIdentity])
 
-  async function onGeneratePhoto() {
-    if (!result) {
+  const onGeneratePhoto = useCallback(async () => {
+    const current = resultRef.current
+    if (!current) {
       toast.message('Generate a Basepost first')
       return
     }
 
-    let id: Identity = identity
+    let id = identityRef.current
     if (!id.address) {
       const addr = await ensureWalletIdentity()
       if (!addr) return
       id = { address: addr }
     }
 
-    const currentCredits = credits ?? 5
+    const currentCredits = creditsRef.current ?? 5
     if (currentCredits < 5) {
       toast.error('Need 5 credits for a photo')
       return
@@ -892,8 +869,8 @@ export default function App() {
     setImageId('')
     setImageError(false)
     try {
-      await hapticImpact(capabilities, 'medium')
-      const out = await apiGenerateImage(id, result, photoStylePreset || undefined)
+      await hapticImpact(capabilitiesRef.current, 'medium')
+      const out = await apiGenerateImage(id, current, photoStylePresetRef.current || undefined)
       const path = out.imageDataUrl || out.imageUrl || (out.imageId ? `/api/image?id=${encodeURIComponent(out.imageId)}` : '')
       setImageUrl(toAbsoluteUrl(path))
       setImageId(out.imageId || '')
@@ -910,47 +887,49 @@ export default function App() {
     } finally {
       setGeneratingImage(false)
     }
-  }
+  }, [ensureWalletIdentity])
 
-  async function onCopy() {
-    if (!result) return
+  const onCopy = useCallback(async () => {
+    const current = resultRef.current
+    if (!current) return
     try {
-      await hapticSelection(capabilities)
-      await copyText(result)
+      await hapticSelection(capabilitiesRef.current)
+      await copyText(current)
       toast.success('Copied')
     } catch {
       toast.error('Copy failed')
     }
-  }
+  }, [])
 
-  async function onPostDirectly() {
-    if (!result) return
+  const onPostDirectly = useCallback(async () => {
+    const current = resultRef.current
+    if (!current) return
     setPosting(true)
     try {
-      await hapticImpact(capabilities, 'light')
+      await hapticImpact(capabilitiesRef.current, 'light')
       setPendingToast('success', 'Welcome back ✅')
       const embed = imageUrl?.startsWith('http')
         ? imageUrl
         : imageId
           ? `${SITE_URL}/api/image?id=${encodeURIComponent(imageId)}`
           : ''
-      void composeCast({ text: result, embeds: embed ? [embed] : undefined })
+      void composeCast({ text: current, embeds: embed ? [embed] : undefined })
     } catch (e: any) {
       if (isUserRejection(e)) return toast.message('Post cancelled')
       toast.error(e?.message || 'Failed to open composer')
     } finally {
       setPosting(false)
     }
-  }
+  }, [imageUrl, imageId])
 
-  async function onShareForCredits() {
+  const onShareForCredits = useCallback(async () => {
     if (!shareEligible) {
       toast.message('Share bonus already claimed today')
       return
     }
     setSharing(true)
     try {
-      await hapticImpact(capabilities, 'medium')
+      await hapticImpact(capabilitiesRef.current, 'medium')
       const shareUrl = normalizeSiteUrl(SITE_URL)
       const shareText = getRotatingShareCopy(SITE_URL)
       setPendingToast('message', 'Welcome back ✅ Adding your share bonus…')
@@ -964,7 +943,7 @@ export default function App() {
       const awardIfPending = async () => {
         try {
           setCredits((prev) => Math.max(0, (prev ?? 0) + 6))
-          const award = await apiShareAward(identity)
+          const award = await apiShareAward(identityRef.current)
           setCredits(award.credits)
           setShareEligible(false)
           setTodayUtc(award.todayUtc)
@@ -990,9 +969,9 @@ export default function App() {
     } finally {
       setSharing(false)
     }
-  }
+  }, [shareEligible])
 
-  async function onGetCredit() {
+  const onGetCredit = useCallback(async () => {
     if (submittingCredit || verifyingCredit) return
 
     setSubmittingCredit(true)
@@ -1003,8 +982,11 @@ export default function App() {
         return
       }
 
-      await hapticImpact(capabilities, 'medium')
-      const provider: any = await getEthereumProvider(selectedWalletId, { isInMiniApp, client: miniClient })
+      await hapticImpact(capabilitiesRef.current, 'medium')
+      const provider: any = await getEthereumProvider(selectedWalletIdRef.current, {
+        isInMiniApp: isInMiniAppRef.current,
+        client: miniClientRef.current,
+      })
 
       const chainId = (await provider.request({ method: 'eth_chainId' })) as string
       if (chainId !== '0x2105') {
@@ -1117,7 +1099,7 @@ export default function App() {
       setSubmittingCredit(false)
       setVerifyingCredit(false)
     }
-  }
+  }, [submittingCredit, verifyingCredit, ensureWalletIdentity])
 
   async function waitForCallsTxHash(
     provider: any,
@@ -1159,7 +1141,7 @@ export default function App() {
     throw new Error('Timed out waiting for transaction confirmation.')
   }
 
-  async function onSendTip() {
+  const onSendTip = useCallback(async () => {
     const dataSuffix = (window as any).__ERC8021_DATA_SUFFIX__
     if (!isAddress(RECIPIENT)) {
       toast.error('Tip recipient is invalid')
@@ -1182,10 +1164,13 @@ export default function App() {
 
     setTipStage('preparing')
     try {
-      await hapticImpact(capabilities, 'medium')
+      await hapticImpact(capabilitiesRef.current, 'medium')
       await new Promise((r) => setTimeout(r, 1200))
 
-      const provider: any = await getEthereumProvider(selectedWalletId, { isInMiniApp, client: miniClient })
+      const provider: any = await getEthereumProvider(selectedWalletIdRef.current, {
+        isInMiniApp: isInMiniAppRef.current,
+        client: miniClientRef.current,
+      })
 
       const chainId = (await provider.request({ method: 'eth_chainId' })) as string
       if (chainId !== '0x2105') {
@@ -1253,24 +1238,22 @@ export default function App() {
       }
       setTipStage('idle')
     }
-  }
+  }, [tipUsd, ensureWalletIdentity])
 
-  function closeTip() {
+  const closeTip = useCallback(() => {
     setTipOpen(false)
     setTipStage('idle')
-  }
+  }, [])
+
+  const openPhotoStyle = useCallback(() => setPhotoStyleOpen(true), [])
+  const openLeaderboard = useCallback(() => setView('leaderboard'), [])
+  const goHome = useCallback(() => setView('home'), [])
+  const toggleTheme = useCallback(() => setDark((v) => !v), [])
+  const openTipModal = useCallback(() => setTipOpen(true), [])
 
   const creditsLabel = credits === null ? '—' : String(credits)
   const creditBusy = submittingCredit || verifyingCredit
   const creditLoadingText = submittingCredit ? 'Confirm in wallet' : 'Verifying tx'
-
-  // Stable handlers for the memoized BasepostHeader, to avoid re-renders.
-  const openPhotoStyle = React.useCallback(() => setPhotoStyleOpen(true), [])
-  const triggerGeneratePhoto = React.useCallback(() => {
-    void onGeneratePhoto()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [result, credits, photoStylePreset, identity.address, capabilities, miniClient, isInMiniApp, selectedWalletId])
-
   const photoDisabled = !result || generating || posting || generatingImage
 
   if (!miniLoaded) {
@@ -1300,8 +1283,8 @@ export default function App() {
             <LeaderboardPage
               identity={identity}
               dark={dark}
-              onToggleTheme={() => setDark((v) => !v)}
-              onClose={() => setView('home')}
+              onToggleTheme={toggleTheme}
+              onClose={goHome}
             />
           ) : (
             <>
@@ -1323,20 +1306,12 @@ export default function App() {
                     </div>
                   ) : null}
 
-                  <Button
-                    variant="ghost"
-                    aria-label="Leaderboard"
-                    onClick={() => setView('leaderboard')}
-                  >
+                  <Button variant="ghost" aria-label="Leaderboard" onClick={openLeaderboard}>
                     <LeaderboardIcon className="h-8 w-8 lb-rainbow" />
                     <span className="hidden sm:inline">Leaderboard</span>
                   </Button>
 
-                  <Button
-                    variant="ghost"
-                    aria-label="Toggle theme"
-                    onClick={() => setDark((v) => !v)}
-                  >
+                  <Button variant="ghost" aria-label="Toggle theme" onClick={toggleTheme}>
                     {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
                     <span className="hidden sm:inline">{dark ? 'Light' : 'Dark'}</span>
                   </Button>
@@ -1355,7 +1330,7 @@ export default function App() {
                       variant="primary"
                       isLoading={false}
                       disabled={!canGenerate || generating}
-                      onClick={() => void onGenerate(false)}
+                      onClick={onGenerate}
                     >
                       <LoadingLabel
                         active={generating}
@@ -1369,7 +1344,7 @@ export default function App() {
                       <Button
                         variant="secondary"
                         isLoading={walletConnecting}
-                        onClick={() => void onCreateWallet()}
+                        onClick={onCreateWallet}
                         disabled={!miniLoaded}
                         className="w-full sm:w-auto"
                       >
@@ -1380,7 +1355,7 @@ export default function App() {
                       <Button
                         variant="secondary"
                         isLoading={false}
-                        onClick={() => void onGetCredit()}
+                        onClick={onGetCredit}
                         disabled={!miniLoaded || !walletConnected || creditBusy}
                         className="w-full sm:w-auto"
                       >
@@ -1396,7 +1371,7 @@ export default function App() {
                       <Button
                         variant="ghost"
                         isLoading={sharing}
-                        onClick={() => void onShareForCredits()}
+                        onClick={onShareForCredits}
                         disabled={!shareEligible || !walletConnected}
                         className="w-full sm:w-auto"
                       >
@@ -1406,7 +1381,7 @@ export default function App() {
 
                       <Button
                         variant="ghost"
-                        onClick={() => setTipOpen(true)}
+                        onClick={openTipModal}
                         disabled={!miniLoaded}
                         className="w-full sm:w-auto"
                       >
@@ -1422,96 +1397,127 @@ export default function App() {
                 </CardContent>
               </Card>
 
-              <Card className="mt-6">
-                <CardHeader className="pb-3">
-                  <BasepostHeader
-                    photoStyleLabel={photoStyleLabel}
-                    generatingImage={generatingImage}
-                    photoDisabled={photoDisabled}
-                    onOpenStyle={openPhotoStyle}
-                    onGeneratePhoto={triggerGeneratePhoto}
-                  />
-                </CardHeader>
-                <CardContent>
-                  <div style={{ minHeight: 120 }}>
-                    {generatingImage ? (
-                      <div className="mb-3">
-                        <Skeleton className="w-full rounded-2xl" style={{ height: 240 }} />
-                      </div>
-                    ) : imageUrl ? (
-                      <div className="mb-3">
-                        <img
-                          src={imageUrl}
-                          alt="Generated"
-                          className="w-full rounded-2xl border border-zinc-200 bg-white object-cover dark:border-zinc-800 dark:bg-zinc-950"
-                          style={{ aspectRatio: '4 / 3' }}
-                          loading="eager"
-                          decoding="async"
-                          referrerPolicy="no-referrer"
-                          onLoad={() => setImageError(false)}
-                          onError={() => setImageError(true)}
-                        />
-
-                        {imageError ? (
-                          <div className="mt-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-900 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
-                            Couldn’t load the generated image.
-                            <button
-                              className="ml-2 underline underline-offset-2"
-                              onClick={() => {
-                                setImageError(false)
-                                setImageUrl((prev) => {
-                                  if (!prev) return prev
-                                  if (prev.startsWith('data:')) return prev
-                                  return `${prev}${prev.includes('?') ? '&' : '?'}cb=${Date.now()}`
-                                })
-                              }}
-                            >
-                              Retry
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-
-                    {generating ? (
-                      <div className="space-y-3">
-                        <Skeleton className="h-4 w-full" />
-                        <Skeleton className="h-4 w-11/12" />
-                        <Skeleton className="h-4 w-4/5" />
-                      </div>
-                    ) : result ? (
-                      <div className="whitespace-pre-wrap rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
-                        {result}
-                      </div>
-                    ) : (
-                      <div className="text-sm text-zinc-600 dark:text-zinc-400">Hit Generate to see your post here ⌯⌲</div>
-                    )}
+              {/* Basepost card — built from plain divs (not Card/CardHeader/CardContent)
+                  to sidestep any Card-component class churn that was causing blink
+                  in Base app's webview. Layout & style locked in with explicit
+                  min-heights + stable classNames. */}
+              <div
+                className="mt-6 rounded-2xl border border-zinc-200 bg-white/70 p-5 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/50"
+                style={{ contain: 'layout paint' }}
+              >
+                <div
+                  className="flex items-start justify-between gap-3"
+                  style={{ minHeight: 56 }}
+                >
+                  <div>
+                    <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Basepost</div>
+                    <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                      Photo style: <span className="font-semibold text-zinc-900 dark:text-zinc-100">{photoStyleLabel}</span>
+                    </div>
                   </div>
 
-                  <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-                    <Button
-                      variant="primary"
-                      isLoading={posting}
-                      disabled={!result}
-                      onClick={() => void onPostDirectly()}
-                      className="w-full sm:w-auto"
+                  <div className="flex items-center gap-2 shrink-0 -mt-0.5">
+                    <button
+                      onClick={openPhotoStyle}
+                      className="rounded-2xl p-2 text-zinc-700 transition hover:bg-zinc-100 active:scale-[0.98] dark:text-zinc-200 dark:hover:bg-zinc-900"
+                      aria-label="Choose photo style"
+                      title="Choose photo style"
                     >
-                      <Send className="h-4 w-4" />
-                      Post Directly
-                    </Button>
+                      <Palette className="h-7 w-7 lb-rainbow" />
+                    </button>
 
+                    {/* variant FIXED to "success" permanently — no re-style flicker */}
                     <Button
-                      variant="secondary"
-                      disabled={!result}
-                      onClick={() => void onCopy()}
-                      className="w-full sm:w-auto"
+                      variant="success"
+                      isLoading={false}
+                      disabled={photoDisabled}
+                      onClick={onGeneratePhoto}
+                      className="px-5 py-2.5 text-sm"
                     >
-                      <Copy className="h-4 w-4" />
-                      Copy
+                      <LoadingLabel
+                        active={generatingImage}
+                        estimateSec={35}
+                        idleText="Generate Photo (-5c)"
+                        icon={<ImageIcon className="h-4 w-4" />}
+                      />
                     </Button>
                   </div>
-                </CardContent>
-              </Card>
+                </div>
+
+                <div className="mt-4" style={{ minHeight: 120 }}>
+                  {generatingImage ? (
+                    <Skeleton className="w-full rounded-2xl" style={{ height: 240 }} />
+                  ) : imageUrl ? (
+                    <>
+                      <img
+                        src={imageUrl}
+                        alt="Generated"
+                        className="w-full rounded-2xl border border-zinc-200 bg-white object-cover dark:border-zinc-800 dark:bg-zinc-950"
+                        style={{ aspectRatio: '4 / 3' }}
+                        loading="eager"
+                        decoding="async"
+                        referrerPolicy="no-referrer"
+                        onLoad={() => setImageError(false)}
+                        onError={() => setImageError(true)}
+                      />
+
+                      {imageError ? (
+                        <div className="mt-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-900 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
+                          Couldn’t load the generated image.
+                          <button
+                            className="ml-2 underline underline-offset-2"
+                            onClick={() => {
+                              setImageError(false)
+                              setImageUrl((prev) => {
+                                if (!prev) return prev
+                                if (prev.startsWith('data:')) return prev
+                                return `${prev}${prev.includes('?') ? '&' : '?'}cb=${Date.now()}`
+                              })
+                            }}
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : generating ? (
+                    <div className="space-y-3">
+                      <Skeleton className="h-4 w-full" />
+                      <Skeleton className="h-4 w-11/12" />
+                      <Skeleton className="h-4 w-4/5" />
+                    </div>
+                  ) : result ? (
+                    <div className="whitespace-pre-wrap rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
+                      {result}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-zinc-600 dark:text-zinc-400">Hit Generate to see your post here ⌯⌲</div>
+                  )}
+                </div>
+
+                <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                  <Button
+                    variant="primary"
+                    isLoading={posting}
+                    disabled={!result}
+                    onClick={onPostDirectly}
+                    className="w-full sm:w-auto"
+                  >
+                    <Send className="h-4 w-4" />
+                    Post Directly
+                  </Button>
+
+                  <Button
+                    variant="secondary"
+                    disabled={!result}
+                    onClick={onCopy}
+                    className="w-full sm:w-auto"
+                  >
+                    <Copy className="h-4 w-4" />
+                    Copy
+                  </Button>
+                </div>
+              </div>
 
               {photoStyleOpen ? (
                 <div className="fixed inset-0 z-50">
@@ -1520,9 +1526,7 @@ export default function App() {
                     onClick={() => setPhotoStyleOpen(false)}
                   />
 
-                  <div
-                    className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-2xl rounded-t-3xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
-                  >
+                  <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-2xl rounded-t-3xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Photo style</div>
@@ -1542,7 +1546,7 @@ export default function App() {
                     <div className="mt-4 grid grid-cols-2 gap-2 max-h-[48vh] overflow-auto pr-1">
                       <button
                         onClick={() => {
-                          void hapticSelection(capabilities)
+                          void hapticSelection(capabilitiesRef.current)
                           setAndPersistPhotoStyle(null)
                           setPhotoStyleOpen(false)
                           toast.message('Using default style')
@@ -1561,7 +1565,7 @@ export default function App() {
                         <button
                           key={opt.key}
                           onClick={() => {
-                            void hapticSelection(capabilities)
+                            void hapticSelection(capabilitiesRef.current)
                             setAndPersistPhotoStyle(opt.key)
                             setPhotoStyleOpen(false)
                             toast.message(`Style: ${opt.label}`)
@@ -1589,12 +1593,10 @@ export default function App() {
                 <div className="fixed inset-0 z-50">
                   <div
                     className="absolute inset-0 bg-black/50"
-                    onClick={() => closeTip()}
+                    onClick={closeTip}
                   />
 
-                  <div
-                    className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-2xl rounded-t-3xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
-                  >
+                  <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-2xl rounded-t-3xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Tip with USDC</div>
@@ -1602,7 +1604,7 @@ export default function App() {
                       </div>
                       <button
                         className="rounded-xl p-2 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                        onClick={() => closeTip()}
+                        onClick={closeTip}
                         aria-label="Close"
                       >
                         <X className="h-4 w-4" />
@@ -1653,7 +1655,7 @@ export default function App() {
                             className="w-full"
                             isLoading={tipStage === 'preparing' || tipStage === 'confirm' || tipStage === 'sending'}
                             disabled={tipStage !== 'idle'}
-                            onClick={() => void onSendTip()}
+                            onClick={onSendTip}
                           >
                             <HandCoins className="h-4 w-4" />
                             {tipStage === 'idle'
