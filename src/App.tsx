@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Copy, Moon, Send, Sparkles, Sun, Wallet, HandCoins, X, Image as ImageIcon, Palette } from 'lucide-react'
+import { Copy, Moon, Send, Sparkles, Sun, Wallet, HandCoins, X, Image as ImageIcon } from 'lucide-react'
 import { getAddress, isAddress, parseUnits, encodeFunctionData, keccak256, toHex } from 'viem'
 
 import { Card, CardContent, CardHeader } from '@/components/Card'
@@ -9,7 +9,7 @@ import { Skeleton } from '@/components/Skeleton'
 import { RoadmapBell } from '@/components/RoadmapBell'
 import { LeaderboardPage } from '@/components/LeaderboardPage'
 import { LeaderboardIcon } from '@/components/LeaderboardIcon'
-import { apiGenerate, apiGenerateImage, apiMe, apiShareAward, apiVerifyTx, type Identity } from '@/lib/api'
+import { apiGenerate, apiMe, apiShareAward, apiVerifyTx, type Identity } from '@/lib/api'
 import { composeCast, connectWalletProvider, getEthereumProvider, hapticImpact, hapticSelection, initMiniApp, listAvailableWallets, shareToTwitter, type WalletOption } from '@/lib/miniapp'
 
 const CONTRACT = '0xB331328F506f2D35125e367A190e914B1b6830cF'
@@ -30,10 +30,6 @@ const LOG_ACTION_ABI = [
 const SITE_URL = import.meta.env.VITE_PUBLIC_SITE_URL || window.location.origin
 const WALLET_CREDIT_KEY = 'bp_credits_cache_v1'
 const PENDING_TX_KEY = 'bp_pending_tx_v1'
-
-// Photo generation is temporarily disabled to save on API costs.
-// Flip this flag back to `false` to enable.
-const PHOTO_FEATURE_DISABLED = true
 
 const SHARE_COPY_TEMPLATES = [
   'Okay this is actually useful 💙 Now I just open BasePosting — one tap gives banger post ideas in seconds. Try it: {url}',
@@ -104,14 +100,12 @@ const USDC_DECIMALS = 6
 const RECIPIENT =
   import.meta.env.VITE_TIP_RECIPIENT ||
   '0xe8Bda2Ed9d2FC622D900C8a76dc455A3e79B041f'
-const PAYMASTER_SERVICE_URL = (import.meta.env.VITE_PAYMASTER_SERVICE_URL || '').trim()
 
 function isUserRejection(e: any) {
   const msg = String(e?.message || '').toLowerCase()
   return e?.code === 4001 || msg.includes('user rejected') || msg.includes('rejected') || msg.includes('denied')
 }
 
-// Expanded: Trust wallet / Bitget use different error text
 function isMethodNotSupported(e: any) {
   const msg = String(e?.message || '').toLowerCase()
   return (
@@ -139,19 +133,6 @@ function isInvalidParamsOrCapability(e: any) {
     msg.includes('unexpected') ||
     msg.includes('unsupported capability')
   )
-}
-
-function isHexString(value: any): value is `0x${string}` {
-  return typeof value === 'string' && /^0x[0-9a-fA-F]*$/.test(value)
-}
-
-function appendCalldataSuffix(data: `0x${string}`, suffix?: string | null): `0x${string}` {
-  if (!suffix) return data
-  if (!isHexString(suffix)) return data
-  if (((suffix.length - 2) % 2) !== 0) return data
-  if (suffix === '0x') return data
-  if (data === '0x') return suffix
-  return (data + suffix.slice(2)) as `0x${string}`
 }
 
 async function copyText(text: string) {
@@ -792,8 +773,7 @@ export default function App() {
     }
   }, [])
 
-  // POST DIRECTLY — now goes to Twitter / X (not Farcaster).
-  // Mobile shows the OS app chooser (X app / clone). Desktop opens web composer.
+  // POST DIRECTLY — Twitter / X (not Farcaster)
   const onPostDirectly = useCallback(async () => {
     const current = resultRef.current
     if (!current) return
@@ -802,9 +782,8 @@ export default function App() {
       await hapticImpact(capabilitiesRef.current, 'light')
       shareToTwitter({ text: current })
     } catch (e: any) {
-      toast.error(e?.message || 'Failed to open Twitter composer')
+      toast.error(e?.message || 'Failed to open X composer')
     } finally {
-      // release the button quickly; the user is now in the X app
       setTimeout(() => setPosting(false), 500)
     }
   }, [])
@@ -894,457 +873,4 @@ export default function App() {
 
       const data = encodeFunctionData({
         abi: LOG_ACTION_ABI,
-        functionName: 'logAction',
-        args: [action, payload],
-      })
-
-      // ---------------- TX SUBMISSION ----------------
-      // Strategy:
-      //   1) Try wallet_sendCalls (Base smart wallet path)
-      //   2) If the wallet doesn't support it OR returns invalid-request,
-      //      fall back to plain eth_sendTransaction.
-      //   3) If balance is 0 and fallback can't pay gas, tell the user.
-      //
-      // This is the ONLY path that non-smart wallets like Trust / Bitget /
-      // MetaMask mobile support.
-      let txHash = ''
-      let usedFallback = false
-
-      // helper: plain legacy eth_sendTransaction
-      const sendLegacyTx = async () => {
-        const balHex = (await provider.request({ method: 'eth_getBalance', params: [addr, 'latest'] })) as string
-        if (BigInt(balHex) === 0n) {
-          throw new Error(
-            'Your wallet has 0 Base ETH to pay gas. Please add a small amount of ETH on Base (any bridge like bridge.base.org works) and retry.'
-          )
-        }
-        const tx: any = {
-          from: addr,
-          to: CONTRACT,
-          data,
-          // NOTE: we intentionally OMIT `value`. Some wallets (Trust) reject
-          // `value: '0x0'` as "invalid request". `value` defaults to 0 when omitted.
-        }
-        return (await provider.request({ method: 'eth_sendTransaction', params: [tx] })) as string
-      }
-
-      // Attempt 1: wallet_sendCalls
-      try {
-        const callsPayload: any = {
-          version: '2.0.0',
-          from: addr,
-          chainId: '0x2105',
-          atomicRequired: false, // be lenient
-          calls: [{ to: CONTRACT, data }],
-        }
-        const sendRes: any = await provider.request({ method: 'wallet_sendCalls', params: [callsPayload] })
-
-        const confirmationId =
-          typeof sendRes === 'string'
-            ? sendRes
-            : sendRes?.callsId || sendRes?.batchId || sendRes?.id || sendRes?.result || sendRes?.hash
-
-        if (!confirmationId || typeof confirmationId !== 'string') {
-          throw new Error('wallet_sendCalls returned no id')
-        }
-
-        toast.message('Transaction submitted. Verifying on-chain…')
-        txHash = /^0x[a-fA-F0-9]{64}$/.test(confirmationId)
-          ? confirmationId
-          : await waitForCallsTxHash(provider, confirmationId, { timeoutMs: 20000, pollMs: 1200 })
-      } catch (e: any) {
-        // Fallback to legacy eth_sendTransaction for non-smart wallets.
-        if (isMethodNotSupported(e) || isInvalidParamsOrCapability(e)) {
-          usedFallback = true
-        } else if (isUserRejection(e)) {
-          throw e
-        } else {
-          // Unknown error — still try the legacy path as a safety net.
-          usedFallback = true
-        }
-      }
-
-      if (!txHash && usedFallback) {
-        txHash = await sendLegacyTx()
-        toast.message('Transaction submitted. Verifying on-chain…')
-      }
-
-      if (!txHash) {
-        throw new Error('Could not submit transaction. Please try again.')
-      }
-
-      savePendingTx(txHash, addr)
-      setSubmittingCredit(false)
-      await verifyCreditTxInBackground({ address: addr }, txHash)
-    } catch (e: any) {
-      if (isUserRejection(e)) {
-        toast.message('Transaction cancelled')
-      } else {
-        toast.error(e?.message || 'Transaction failed')
-      }
-      setSubmittingCredit(false)
-      setVerifyingCredit(false)
-    }
-  }, [submittingCredit, verifyingCredit, ensureWalletIdentity])
-
-  async function waitForCallsTxHash(
-    provider: any,
-    callsId: string,
-    opts: { timeoutMs?: number; pollMs?: number } = {},
-  ) {
-    const timeoutMs = opts.timeoutMs ?? 15000
-    const pollMs = opts.pollMs ?? 800
-    const started = Date.now()
-
-    while (Date.now() - started < timeoutMs) {
-      let status: any
-      try {
-        status = await provider.request({ method: 'wallet_getCallsStatus', params: [callsId] })
-      } catch (e: any) {
-        if (e?.code === 4100) {
-          throw new Error('Your wallet does not support wallet_getCallsStatus, so we cannot verify this batch transaction.')
-        }
-        throw e
-      }
-
-      const code = Number(status?.status)
-      if (code === 100) {
-        await new Promise((r) => setTimeout(r, pollMs))
-        continue
-      }
-
-      if (code === 200) {
-        const receipts = status?.receipts
-        const first = Array.isArray(receipts) ? receipts[0] : receipts
-        const txHash = first?.transactionHash
-        if (!txHash) throw new Error('Batch confirmed, but no transactionHash was returned by the wallet.')
-        return txHash as string
-      }
-
-      throw new Error(`Batch failed (status ${isNaN(code) ? String(status?.status) : code}).`)
-    }
-
-    throw new Error('Timed out waiting for transaction confirmation.')
-  }
-
-  const onSendTip = useCallback(async () => {
-    if (!isAddress(RECIPIENT)) {
-      toast.error('Tip recipient is invalid')
-      return
-    }
-
-    const addr = await ensureWalletIdentity()
-    if (!addr) return
-
-    let amount: bigint
-    try {
-      const v = String(tipUsd || '').trim()
-      if (!v) throw new Error('Enter an amount')
-      amount = parseUnits(v, USDC_DECIMALS)
-      if (amount <= 0n) throw new Error('Amount must be > 0')
-    } catch (e: any) {
-      toast.error(e?.message || 'Invalid amount')
-      return
-    }
-
-    setTipStage('preparing')
-    try {
-      await hapticImpact(capabilitiesRef.current, 'medium')
-      await new Promise((r) => setTimeout(r, 1200))
-
-      const provider: any = await getEthereumProvider(selectedWalletIdRef.current, {
-        isInMiniApp: isInMiniAppRef.current,
-        client: miniClientRef.current,
-      })
-
-      const chainId = (await provider.request({ method: 'eth_chainId' })) as string
-      if (chainId !== '0x2105') {
-        try {
-          await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x2105' }] })
-        } catch {
-          throw new Error('Please switch to Base Mainnet (0x2105) to send a tip.')
-        }
-      }
-
-      const recipient = getAddress(RECIPIENT)
-      const data = encodeErc20Transfer(recipient, amount)
-
-      setTipStage('confirm')
-
-      // Try wallet_sendCalls then fall back to eth_sendTransaction (Trust etc.)
-      let submitted = false
-      try {
-        await provider.request({
-          method: 'wallet_sendCalls',
-          params: [{
-            version: '2.0.0',
-            from: addr,
-            chainId: '0x2105',
-            atomicRequired: false,
-            calls: [{ to: USDC_CONTRACT, data }],
-          }],
-        })
-        submitted = true
-      } catch (e: any) {
-        if (!isMethodNotSupported(e) && !isInvalidParamsOrCapability(e)) {
-          if (isUserRejection(e)) throw e
-        }
-      }
-
-      if (!submitted) {
-        const tx = { from: addr, to: USDC_CONTRACT, data }
-        await provider.request({ method: 'eth_sendTransaction', params: [tx] })
-      }
-
-      setTipStage('sending')
-      await new Promise((r) => setTimeout(r, 500))
-      setTipStage('done')
-    } catch (e: any) {
-      if (isUserRejection(e)) {
-        toast.message('Tip cancelled')
-      } else {
-        toast.error(e?.message || 'Tip failed')
-      }
-      setTipStage('idle')
-    }
-  }, [tipUsd, ensureWalletIdentity])
-
-  const closeTip = useCallback(() => {
-    setTipOpen(false)
-    setTipStage('idle')
-  }, [])
-
-  const openLeaderboard = useCallback(() => setView('leaderboard'), [])
-  const goHome = useCallback(() => setView('home'), [])
-  const toggleTheme = useCallback(() => setDark((v) => !v), [])
-  const openTipModal = useCallback(() => setTipOpen(true), [])
-
-  const creditsLabel = credits === null ? '—' : String(credits)
-  const creditBusy = submittingCredit || verifyingCredit
-  const creditLoadingText = submittingCredit ? 'Confirm in wallet' : 'Verifying tx'
-
-  if (!miniLoaded) {
-    return (
-      <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
-        <div className="mx-auto max-w-2xl px-4 py-10">
-          <Card>
-            <CardHeader>
-              <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">BasePosting</div>
-            </CardHeader>
-            <CardContent>
-              <Skeleton className="h-6 w-48" />
-              <Skeleton className="mt-3 h-24 w-full" />
-              <Skeleton className="mt-4 h-10 w-40" />
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
-      <div className="bg-grid min-h-screen">
-        <div className="mx-auto max-w-2xl px-4 py-10">
-          {view === 'leaderboard' ? (
-            <LeaderboardPage
-              identity={identity}
-              dark={dark}
-              onToggleTheme={toggleTheme}
-              onClose={goHome}
-            />
-          ) : (
-            <>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <div className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">BasePosting</div>
-                    <span className="inline-flex items-center rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs font-semibold text-zinc-700 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-200">
-                      {loadingMe ? '…' : `${creditsLabel} credits`}
-                    </span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400"><span>Stay consistent, Stay based, Post banger💙.</span></div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  {identity.address ? (
-                    <div className="hidden sm:flex items-center gap-2 rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs font-semibold text-zinc-700 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-200">
-                      <span className="font-mono">{shortAddress(identity.address)}</span>
-                    </div>
-                  ) : null}
-
-                  <Button variant="ghost" aria-label="Leaderboard" onClick={openLeaderboard}>
-                    <LeaderboardIcon className="h-8 w-8 lb-rainbow" />
-                    <span className="hidden sm:inline">Leaderboard</span>
-                  </Button>
-
-                  <Button variant="ghost" aria-label="Toggle theme" onClick={toggleTheme}>
-                    {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                    <span className="hidden sm:inline">{dark ? 'Light' : 'Dark'}</span>
-                  </Button>
-                </div>
-              </div>
-
-              <Card className="mt-6">
-                <CardHeader>
-                  <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{walletConnected ? 'Generate Post' : 'Connect wallet first.'}</div>
-                  <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">╰┈➤</div>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex flex-col gap-3">
-                    <Button
-                      className="w-full"
-                      variant="primary"
-                      isLoading={false}
-                      disabled={!canGenerate || generating}
-                      onClick={onGenerate}
-                    >
-                      <LoadingLabel
-                        active={generating}
-                        estimateSec={20}
-                        idleText="Generate (-1c)"
-                        icon={<Sparkles className="h-4 w-4" />}
-                      />
-                    </Button>
-
-                    <div className="flex flex-col gap-2 sm:flex-row">
-                      <Button
-                        variant="secondary"
-                        isLoading={walletConnecting}
-                        onClick={onCreateWallet}
-                        disabled={!miniLoaded}
-                        className="w-full sm:w-auto"
-                      >
-                        <Wallet className="h-4 w-4" />
-                        {identity.address ? shortAddress(identity.address) : 'Connect Wallet'}
-                      </Button>
-
-                      <Button
-                        variant="secondary"
-                        isLoading={false}
-                        onClick={onGetCredit}
-                        disabled={!miniLoaded || !walletConnected || creditBusy}
-                        className="w-full sm:w-auto"
-                      >
-                        <LoadingLabel
-                          active={creditBusy}
-                          estimateSec={submittingCredit ? 20 : 45}
-                          idleText="Get Credit"
-                          icon={<Wallet className="h-4 w-4" />}
-                          loadingText={creditLoadingText}
-                        />
-                      </Button>
-
-                      <Button
-                        variant="ghost"
-                        isLoading={sharing}
-                        onClick={onShareForCredits}
-                        disabled={!shareEligible || !walletConnected}
-                        className="w-full sm:w-auto"
-                      >
-                        <Send className="h-4 w-4" />
-                        Share for 6 credit
-                      </Button>
-
-                      <Button
-                        variant="ghost"
-                        onClick={openTipModal}
-                        disabled={!miniLoaded}
-                        className="w-full sm:w-auto"
-                      >
-                        <HandCoins className="h-4 w-4" />
-                        Tip Me
-                      </Button>
-                    </div>
-                  </div>
-
-                  {!shareEligible && todayUtc ? (
-                    <div className="mt-3 text-xs text-zinc-600 dark:text-zinc-400">Share bonus already claimed for UTC {todayUtc}.</div>
-                  ) : null}
-                </CardContent>
-              </Card>
-
-              <Card className="mt-6">
-                <CardHeader className="pb-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Basepost</div>
-                      <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-                        Share your generated post directly to X.
-                      </div>
-                    </div>
-
-                    {/* Photo generation disabled for now */}
-                    <Button
-                      variant="secondary"
-                      isLoading={false}
-                      disabled
-                      className="px-5 py-2.5 text-sm opacity-70"
-                      title="Photo generation is temporarily disabled"
-                    >
-                      <ImageIcon className="h-4 w-4" />
-                      Photo: off
-                    </Button>
-                  </div>
-
-                  <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-2 text-[11px] font-medium text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-                    📸 Photo generation is temporarily disabled (cost saving). It will be back on soon.
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div style={{ minHeight: 120 }}>
-                    {generating ? (
-                      <div className="space-y-3">
-                        <Skeleton className="h-4 w-full" />
-                        <Skeleton className="h-4 w-11/12" />
-                        <Skeleton className="h-4 w-4/5" />
-                      </div>
-                    ) : result ? (
-                      <div className="whitespace-pre-wrap rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
-                        {result}
-                      </div>
-                    ) : (
-                      <div className="text-sm text-zinc-600 dark:text-zinc-400">Hit Generate to see your post here ⌯⌲</div>
-                    )}
-                  </div>
-
-                  <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-                    <Button
-                      variant="primary"
-                      isLoading={posting}
-                      disabled={!result}
-                      onClick={onPostDirectly}
-                      className="w-full sm:w-auto"
-                    >
-                      <Send className="h-4 w-4" />
-                      Post to X
-                    </Button>
-
-                    <Button
-                      variant="secondary"
-                      disabled={!result}
-                      onClick={onCopy}
-                      className="w-full sm:w-auto"
-                    >
-                      <Copy className="h-4 w-4" />
-                      Copy
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {tipOpen ? (
-                <div className="fixed inset-0 z-50">
-                  <div
-                    className="absolute inset-0 bg-black/50"
-                    onClick={closeTip}
-                  />
-
-                  <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-2xl rounded-t-3xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Tip with USDC</div>
-                        <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Network: Base Mainnet • Token: USDC</div>
-                      </div>
-                      <button
-                        className="rounded-xl p-2 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-
+        functionName:
