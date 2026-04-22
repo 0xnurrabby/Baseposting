@@ -35,42 +35,33 @@ function normalizeClientError(e: any) {
   return e
 }
 
-async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs = 12000) {
-  if (!timeoutMs || timeoutMs < 0) {
-    try {
-      return await fetch(input, init)
-    } catch (e: any) {
-      throw normalizeClientError(e)
-    }
-  }
-
-  const controller = new AbortController()
-  const t = setTimeout(() => controller.abort(), timeoutMs)
+// IMPORTANT: we do NOT use AbortController anymore. When the user switches
+// apps / tabs (Base app, Farcaster, browser), mobile browsers aggressively
+// freeze JS timers. If we used AbortController + setTimeout, the timer often
+// didn't fire on resume, OR the request got cancelled. We now rely on:
+//   - keepalive: true           -> lets the request survive backgrounding
+//   - no AbortSignal            -> request cannot be aborted by us
+//   - fetch's own network timeout (usually long enough for serverless calls)
+async function safeFetch(input: RequestInfo | URL, init: RequestInit) {
   try {
-    return await fetch(input, { ...init, signal: controller.signal })
+    return await fetch(input, { ...init, keepalive: true })
   } catch (e: any) {
     throw normalizeClientError(e)
-  } finally {
-    clearTimeout(t)
   }
 }
 
-async function postJson<T>(path: string, body: any, timeoutMs = 90000): Promise<T> {
+async function postJson<T>(path: string, body: any, _timeoutMs = 0): Promise<T> {
   const url = withOrigin(path)
   let lastErr: any = null
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 5; attempt++) {
     try {
-      const r = await fetchWithTimeout(
-        url,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-          cache: 'no-store',
-        },
-        timeoutMs,
-      )
+      const r = await safeFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      })
       const txt = await r.text()
       let data: any
       try {
@@ -87,7 +78,7 @@ async function postJson<T>(path: string, body: any, timeoutMs = 90000): Promise<
       return data as T
     } catch (e: any) {
       lastErr = normalizeClientError(e)
-      if (attempt < 2 && isRetriableError(lastErr)) {
+      if (attempt < 4 && isRetriableError(lastErr)) {
         await sleep(600 * (attempt + 1))
         continue
       }
@@ -103,14 +94,13 @@ export async function apiMe(identity: Identity) {
     ok: boolean
     user: { id: string; credits: number; lastShareAt: string | null }
     share: { canClaimToday: boolean; todayUtc: string }
-  }>('/api/me', identity, 30000)
+  }>('/api/me', identity)
 }
 
 export async function apiGenerate(identity: Identity, prompt: string) {
   return await postJson<{ ok: boolean; text: string; credits: number; sourceCount: number }>(
     '/api/generate',
     { ...identity, prompt },
-    0,
   )
 }
 
@@ -118,7 +108,6 @@ export async function apiGenerateImage(identity: Identity, text: string, stylePr
   return await postJson<{ ok: boolean; imageUrl: string; imageId: string; imageDataUrl?: string; credits: number }>(
     '/api/generate-image',
     { ...identity, text, ...(stylePreset ? { stylePreset } : {}) },
-    0,
   )
 }
 
@@ -126,7 +115,6 @@ export async function apiVerifyTx(identity: Identity, txHash: string) {
   return await postJson<{ ok: boolean; alreadyCounted?: boolean; pending?: boolean; credits: number }>(
     '/api/verify-tx',
     { ...identity, txHash },
-    0,
   )
 }
 
@@ -134,7 +122,6 @@ export async function apiShareAward(identity: Identity) {
   return await postJson<{ ok: boolean; alreadyClaimed: boolean; credits: number; todayUtc: string }>(
     '/api/share-award',
     { ...identity },
-    30000,
   )
 }
 
@@ -154,7 +141,7 @@ export type LeaderboardRow = {
 
 export async function apiLeaderboard(period: LeaderboardPeriod) {
   const url = withOrigin(`/api/leaderboard?period=${encodeURIComponent(period)}`)
-  const r = await fetchWithTimeout(url, { method: 'GET', cache: 'no-store' }, 0)
+  const r = await safeFetch(url, { method: 'GET', cache: 'no-store' })
   const data = await r.json().catch(() => ({}))
   if (!r.ok) {
     const err = new Error((data as any)?.error || `Request failed (${r.status})`)
@@ -167,7 +154,7 @@ export async function apiLeaderboard(period: LeaderboardPeriod) {
 
 export async function apiGetRewardAddress(fid: number) {
   const url = withOrigin(`/api/reward-address?fid=${encodeURIComponent(String(fid))}`)
-  const r = await fetchWithTimeout(url, { method: 'GET', cache: 'no-store' }, 0)
+  const r = await safeFetch(url, { method: 'GET', cache: 'no-store' })
   const data = await r.json().catch(() => ({}))
   if (!r.ok) {
     const err = new Error((data as any)?.error || `Request failed (${r.status})`)
@@ -182,6 +169,5 @@ export async function apiSetRewardAddress(identity: Identity, baseAddress: strin
   return await postJson<{ ok: boolean; userId: string; baseAddress: string }>(
     '/api/reward-address',
     { ...identity, baseAddress },
-    30000,
   )
 }
