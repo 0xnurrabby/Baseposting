@@ -1167,7 +1167,7 @@ export default function App() {
                     >
                     <LoadingLabel
   active={generating}
-  estimateSec={8}
+  estimateSec={20}
   idleText="Generate (-3c)"
   icon={<Sparkles className="h-4 w-4" />}
 />
