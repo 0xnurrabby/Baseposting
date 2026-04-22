@@ -26,15 +26,14 @@ export default async function handler(req: any, res: any) {
   const userId = toUserId(body)
   if (!userId) return json(res, 400, { error: 'Missing user identity (fid or address)' })
 
-  // If user connects via wallet address, try to migrate their legacy fid-based
-  // data (credits + leaderboard + reward address) to their address-based id.
-  // This is idempotent and cheap.
+  // When user connects wallet, try to merge their legacy fid-based data into
+  // their new addr-based account. Idempotent + fast (skip if already merged).
   if (userId.startsWith('addr:')) {
     const addr = userId.slice(5)
     try {
       await migrateFidToAddressIfPossible(addr)
     } catch {
-      // don't fail /me because of migration hiccups
+      // never fail /me because of migration hiccups
     }
   }
 
