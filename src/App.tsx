@@ -727,7 +727,7 @@ export default function App() {
     }
   }, [])
 
-  const onGenerate = useCallback(async () => {
+    const onGenerate = useCallback(async () => {
     if (generating || !miniLoaded) return
 
     let id = identityRef.current
@@ -1167,7 +1167,7 @@ export default function App() {
                     >
                       <LoadingLabel
                         active={generating}
-                        estimateSec={20}
+                        estimateSec={10}
                         idleText="Generate (-3c)"
                         icon={<Sparkles className="h-4 w-4" />}
                       />
