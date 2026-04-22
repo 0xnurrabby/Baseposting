@@ -727,7 +727,7 @@ export default function App() {
     }
   }, [])
 
-    const onGenerate = useCallback(async () => {
+  const onGenerate = useCallback(async () => {
     if (generating || !miniLoaded) return
 
     let id = identityRef.current
@@ -747,12 +747,7 @@ export default function App() {
     setResult('')
     try {
       await hapticImpact(capabilitiesRef.current, 'medium')
-
-      // ⚡ Streaming: text appears progressively as tokens arrive
-      const out = await apiGenerate(id, '', (partial) => {
-        setResult(partial)
-      })
-
+      const out = await apiGenerate(id, '')
       setResult(out.text)
       setCredits(out.credits)
       toast.success('Cooked :)')
@@ -1170,13 +1165,12 @@ export default function App() {
                       disabled={!canGenerate || generating}
                       onClick={onGenerate}
                     >
-                    <LoadingLabel
-  active={generating}
-  estimateSec={8}
-  idleText="Generate (-3c)"
-  icon={<Sparkles className="h-4 w-4" />}
-/>
-
+                      <LoadingLabel
+                        active={generating}
+                        estimateSec={20}
+                        idleText="Generate (-3c)"
+                        icon={<Sparkles className="h-4 w-4" />}
+                      />
                     </Button>
 
                     <div className="flex flex-col gap-2 sm:flex-row">
