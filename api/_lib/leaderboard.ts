@@ -9,11 +9,9 @@ export type LeaderboardEntry = {
   creditsSpent: number
   postCount: number
   photoCount: number
-  // Optional enrichment (filled by /api/leaderboard)
   displayName?: string
   username?: string
   pfpUrl?: string
-  // Reward address
   baseAddress?: string | null
   rewardUsd?: number | null
 }
@@ -24,7 +22,6 @@ const LB_KEY_7D = 'leaderboard:7d'
 const LB_KEY_PREV = 'leaderboard:prev'
 const LB_META_KEY = 'leaderboard:meta'
 
-// “Detabase” / Upstash Data Browser-friendly strings
 const ADMIN_LB_7D = 'admin:leaderboard_7d'
 const ADMIN_LB_PREV = 'admin:leaderboard_prev'
 
@@ -32,36 +29,7 @@ const DAILY_SPEND_PREFIX = 'daily:spend:'
 const DAILY_POST_PREFIX = 'daily:post:'
 const DAILY_PHOTO_PREFIX = 'daily:photo:'
 const REWARD_ADDR_HASH = 'reward:addresses'
-
-async function fetchNeynarProfilesByFids(fids: number[]): Promise<Record<number, { displayName?: string; username?: string; pfpUrl?: string }>> {
-  const apiKey = String(process.env.NEYNAR_API_KEY || '').trim()
-  if (!apiKey) return {}
-  if (!fids.length) return {}
-
-  const url = `https://api.neynar.com/v2/farcaster/user/bulk?fids=${encodeURIComponent(fids.join(','))}`
-  try {
-    const r = await fetch(url, {
-      method: 'GET',
-      headers: { 'x-api-key': apiKey, Accept: 'application/json' },
-    })
-    if (!r.ok) return {}
-    const data: any = await r.json()
-    const users: any[] = Array.isArray(data?.users) ? data.users : []
-    const out: Record<number, { displayName?: string; username?: string; pfpUrl?: string }> = {}
-    for (const u of users) {
-      const fid = Number(u?.fid)
-      if (!Number.isFinite(fid)) continue
-      out[fid] = {
-        displayName: u?.display_name ? String(u.display_name) : (u?.displayName ? String(u.displayName) : undefined),
-        username: u?.username ? String(u.username) : undefined,
-        pfpUrl: u?.pfp_url ? String(u.pfp_url) : (u?.pfpUrl ? String(u.pfpUrl) : undefined),
-      }
-    }
-    return out
-  } catch {
-    return {}
-  }
-}
+const FID_TO_ADDR_HASH = 'fid:to:address' // legacy-fid → address mapping
 
 function parseFid(userId: string): number | null {
   if (!userId?.startsWith('fid:')) return null
@@ -83,9 +51,8 @@ function datePlusDays(d: Date, deltaDays: number): Date {
 }
 
 function startOfISOWeekUTC(d: Date): Date {
-  // ISO week starts on Monday. JS getUTCDay(): 0=Sun,1=Mon,...6=Sat
   const day = d.getUTCDay()
-  const diffToMon = (day + 6) % 7 // Mon->0, Tue->1, ..., Sun->6
+  const diffToMon = (day + 6) % 7
   return datePlusDays(d, -diffToMon)
 }
 
@@ -128,13 +95,11 @@ export async function logCreditSpend(args: { userId: string; creditsSpent: numbe
   const post = Math.max(0, Number(args.postDelta || 0))
   const photo = Math.max(0, Number(args.photoDelta || 0))
 
-  // Best-effort: never break the main endpoint
   try {
     if (spent > 0) await redis.hincrby(spendKey, userId, spent)
     if (post > 0) await redis.hincrby(postKey, userId, post)
     if (photo > 0) await redis.hincrby(photoKey, userId, photo)
 
-    // Keep ~90 days of daily keys.
     const ttl = 60 * 60 * 24 * 90
     await redis.expire(spendKey, ttl)
     await redis.expire(postKey, ttl)
@@ -151,7 +116,6 @@ async function aggregateDays(redis: Redis, startInclusive: Date, days: number): 
 
   const agg = new Map<string, DailyAgg>()
 
-  // Spend
   for (const k of spendKeys) {
     const map = await hgetallNumberMap(redis, k)
     for (const [userId, v] of Object.entries(map)) {
@@ -161,7 +125,6 @@ async function aggregateDays(redis: Redis, startInclusive: Date, days: number): 
     }
   }
 
-  // Posts
   for (const k of postKeys) {
     const map = await hgetallNumberMap(redis, k)
     for (const [userId, v] of Object.entries(map)) {
@@ -171,7 +134,6 @@ async function aggregateDays(redis: Redis, startInclusive: Date, days: number): 
     }
   }
 
-  // Photos
   for (const k of photoKeys) {
     const map = await hgetallNumberMap(redis, k)
     for (const [userId, v] of Object.entries(map)) {
@@ -193,6 +155,132 @@ async function getRewardAddressMap(redis: Redis): Promise<Record<string, string>
   }
 }
 
+async function getFidToAddressMap(redis: Redis): Promise<Record<string, string>> {
+  try {
+    const raw = await redis.hgetall<Record<string, string>>(FID_TO_ADDR_HASH)
+    return raw || {}
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * Called whenever a wallet connects. If the same wallet previously used the
+ * app via a Farcaster FID, we move their stats from `fid:N` to `addr:0x...`
+ * so the leaderboard + credits stay with them.
+ *
+ * Strategy: we don't know the fid↔address mapping for old users, so we:
+ *  - store a hint in `fid:to:address` hash when we CAN match (via
+ *    `reward:addresses` hash, where users submitted their base address while
+ *    logged in via fid)
+ *  - on wallet connect, we check that hash and merge if found.
+ */
+export async function migrateFidToAddressIfPossible(address: string): Promise<{ migrated: boolean; fromFid?: number }> {
+  const redis = getRedisClient()
+  if (!redis) return { migrated: false }
+
+  const addrLower = String(address || '').toLowerCase()
+  if (!/^0x[a-f0-9]{40}$/.test(addrLower)) return { migrated: false }
+
+  const newUserId = `addr:${addrLower}`
+
+  try {
+    // Find legacy fid for this address, if any.
+    // reward:addresses hash: userId -> baseAddress
+    const rewards = await getRewardAddressMap(redis)
+    let legacyFidUserId: string | null = null
+    for (const [uid, addr] of Object.entries(rewards)) {
+      if (!uid.startsWith('fid:')) continue
+      if (String(addr).toLowerCase() === addrLower) {
+        legacyFidUserId = uid
+        break
+      }
+    }
+
+    if (!legacyFidUserId) return { migrated: false }
+
+    // Already migrated? Check the addr user record.
+    const newUserKey = `user:${newUserId}`
+    const migratedMark = await redis.hget(newUserKey, 'migratedFrom').catch(() => null)
+    if (migratedMark && String(migratedMark) === legacyFidUserId) {
+      return { migrated: false }
+    }
+
+    // 1) Merge credits (add legacy credits to address user)
+    const legacyUserKey = `user:${legacyFidUserId}`
+    const legacyData = (await redis.hgetall<Record<string, string>>(legacyUserKey)) || {}
+    const legacyCredits = Number(legacyData.credits || '0')
+    const legacyTx = Number(legacyData.txCount || '0')
+    const legacyPost = Number(legacyData.postCount || '0')
+    const legacyPhoto = Number(legacyData.photoCount || '0')
+
+    if (legacyCredits > 0) {
+      await redis.hincrby(newUserKey, 'credits', legacyCredits)
+    }
+    if (legacyTx > 0) await redis.hincrby(newUserKey, 'txCount', legacyTx)
+    if (legacyPost > 0) await redis.hincrby(newUserKey, 'postCount', legacyPost)
+    if (legacyPhoto > 0) await redis.hincrby(newUserKey, 'photoCount', legacyPhoto)
+
+    await redis.hset(newUserKey, {
+      id: newUserId,
+      migratedFrom: legacyFidUserId,
+      migratedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+
+    // 2) Zero out legacy credits so they don't double-spend
+    await redis.hset(legacyUserKey, {
+      credits: '0',
+      migratedTo: newUserId,
+      updatedAt: new Date().toISOString(),
+    })
+
+    // 3) Migrate daily leaderboard entries for all recent days (~30)
+    const today = new Date()
+    for (let i = 0; i < 30; i++) {
+      const day = datePlusDays(today, -i)
+      const dayKey = utcDateKey(day)
+      const keys = [DAILY_SPEND_PREFIX + dayKey, DAILY_POST_PREFIX + dayKey, DAILY_PHOTO_PREFIX + dayKey]
+      for (const k of keys) {
+        try {
+          const v = await redis.hget<string | null>(k, legacyFidUserId)
+          if (v != null) {
+            const n = Number(v)
+            if (Number.isFinite(n) && n > 0) {
+              await redis.hincrby(k, newUserId, n)
+            }
+            await redis.hdel(k, legacyFidUserId)
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    // 4) Move reward address entry
+    try {
+      await redis.hset(REWARD_ADDR_HASH, { [newUserId]: addrLower })
+      await redis.hdel(REWARD_ADDR_HASH, legacyFidUserId)
+    } catch {
+      // ignore
+    }
+
+    // 5) Remember the mapping (for debugging / future-proofing)
+    const fid = parseFid(legacyFidUserId)
+    if (fid != null) {
+      try {
+        await redis.hset(FID_TO_ADDR_HASH, { [String(fid)]: addrLower })
+      } catch {
+        // ignore
+      }
+    }
+
+    return { migrated: true, fromFid: fid ?? undefined }
+  } catch {
+    return { migrated: false }
+  }
+}
+
 function toAdminLines(entries: LeaderboardEntry[], periodLabel: string) {
   const lines: string[] = []
   lines.push(`period: ${periodLabel}`)
@@ -200,8 +288,7 @@ function toAdminLines(entries: LeaderboardEntry[], periodLabel: string) {
   lines.push('')
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i]
-    const label = e.displayName || (e.username ? `@${e.username}` : '')
-    const who = e.fid != null ? `fid:${e.fid}${label ? ` (${label})` : ''}` : e.userId
+    const who = e.fid != null ? `fid:${e.fid}` : e.userId
     const addr = e.baseAddress ? ` | addr: ${e.baseAddress}` : ''
     lines.push(
       `${String(i + 1).padStart(2, '0')}. ${who} | spent: ${e.creditsSpent}c | post: ${e.postCount} | photo: ${e.photoCount}${addr}`
@@ -217,14 +304,10 @@ export async function recomputeLeaderboards(): Promise<{ ok: boolean; updatedAt?
   const now = new Date()
   const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
 
-  // Last 7 days (inclusive): today-6 ... today
   const start7d = datePlusDays(today, -6)
-
-  // Previous week: last completed ISO week (Mon..Sun) in UTC.
-  // Example: if today is Wed, we take Mon..Sun of the previous week.
   const startOfThisIsoWeek = startOfISOWeekUTC(today)
   const startPrev = datePlusDays(startOfThisIsoWeek, -7)
-const rewards = await getRewardAddressMap(redis)
+  const rewards = await getRewardAddressMap(redis)
 
   const build = async (start: Date, days: number): Promise<LeaderboardEntry[]> => {
     const agg = await aggregateDays(redis, start, days)
@@ -250,44 +333,22 @@ const rewards = await getRewardAddressMap(redis)
   const top7d = await build(start7d, 7)
   const topPrev = await build(startPrev, 7)
 
-  // Enrich with Farcaster profile data so we don't show raw fid in UI/admin views.
-  const allFids = Array.from(
-    new Set([...top7d, ...topPrev].map((e) => e.fid).filter((x): x is number => typeof x === 'number' && Number.isFinite(x)))
-  ).slice(0, 150)
-  const profiles = await fetchNeynarProfilesByFids(allFids)
-
-  const applyProfiles = (arr: LeaderboardEntry[]) =>
-    arr.map((e) => {
-      if (e.fid != null && profiles[e.fid]) {
-        const p = profiles[e.fid]
-        return { ...e, displayName: p.displayName, username: p.username, pfpUrl: p.pfpUrl }
-      }
-      return e
-    })
-
-  const top7dEnriched = applyProfiles(top7d)
-  const topPrevEnriched = applyProfiles(topPrev)
-
   const updatedAt = new Date().toISOString()
-  await redis.set(LB_KEY_7D, JSON.stringify(top7dEnriched))
-  await redis.set(LB_KEY_PREV, JSON.stringify(topPrevEnriched))
+  await redis.set(LB_KEY_7D, JSON.stringify(top7d))
+  await redis.set(LB_KEY_PREV, JSON.stringify(topPrev))
   await redis.hset(LB_META_KEY, {
     updatedAt,
-    // helpful for debugging
     range7d: `${utcDateKey(start7d)}..${utcDateKey(today)}`,
     rangePrev: `${utcDateKey(startPrev)}..${utcDateKey(datePlusDays(startPrev, 6))}`,
   })
 
-  // Data-browser friendly strings
-  await redis.set(ADMIN_LB_7D, toAdminLines(top7dEnriched, '7d'))
-  await redis.set(ADMIN_LB_PREV, toAdminLines(topPrevEnriched, 'prev'))
+  await redis.set(ADMIN_LB_7D, toAdminLines(top7d, '7d'))
+  await redis.set(ADMIN_LB_PREV, toAdminLines(topPrev, 'prev'))
 
   return { ok: true, updatedAt }
 }
 
-
 async function maybeRecomputeLeaderboards(redis: Redis, force: boolean): Promise<void> {
-  // If we have fresh cache and not forced, do nothing.
   if (!force) {
     try {
       const meta = await redis.hgetall<Record<string, any>>(LB_META_KEY)
@@ -301,7 +362,6 @@ async function maybeRecomputeLeaderboards(redis: Redis, force: boolean): Promise
     }
   }
 
-  // Avoid stampede: simple redis lock (30s)
   const lockKey = 'lb:recompute:lock'
   const lockVal = Math.random().toString(36).slice(2)
   let gotLock = false
@@ -322,14 +382,14 @@ async function maybeRecomputeLeaderboards(redis: Redis, force: boolean): Promise
     }
   }
 }
+
 export async function readLeaderboard(period: LeaderboardPeriod, forceFresh = false): Promise<{ entries: LeaderboardEntry[]; meta: any }> {
   const redis = getRedisClient()
   if (!redis) return { entries: [], meta: { ok: false, error: 'Redis not configured' } }
 
   const key = period === 'prev' ? LB_KEY_PREV : LB_KEY_7D
-// If cache is missing/stale (or caller requested), recompute now so the UI updates immediately
-// after new posts/photos without waiting for the scheduled cron.
-await maybeRecomputeLeaderboards(redis, forceFresh)
+  await maybeRecomputeLeaderboards(redis, forceFresh)
+
   let entries: LeaderboardEntry[] = []
   try {
     const raw = await redis.get<string | null>(key)
@@ -339,52 +399,6 @@ await maybeRecomputeLeaderboards(redis, forceFresh)
     }
   } catch {
     // ignore
-  }
-
-  // Fallback: if JSON keys are missing (older deployments) but admin strings exist,
-  // parse the admin leaderboard text so the miniapp can still show data.
-  if (entries.length === 0) {
-    const adminKey = period === 'prev' ? ADMIN_LB_PREV : ADMIN_LB_7D
-    try {
-      const rawAdmin = await redis.get<string | null>(adminKey)
-      if (rawAdmin) {
-        const out: LeaderboardEntry[] = []
-        for (const line of rawAdmin.split(/\r?\n/)) {
-          // Example: "01. fid:1407742 (Nur) | spent: 12c | post: 2 | photo: 2 | addr: 0x..."
-          const m = line.match(/^\s*\d+\.\s+(.+)$/)
-          if (!m) continue
-          const body = m[1]
-          const fidMatch = body.match(/fid:(\d+)/)
-          if (!fidMatch) continue
-          const fid = Number(fidMatch[1])
-          if (!Number.isFinite(fid)) continue
-
-          const spentMatch = body.match(/spent:\s*(\d+)c/i)
-          const postMatch = body.match(/post:\s*(\d+)/i)
-          const photoMatch = body.match(/photo:\s*(\d+)/i)
-          const addrMatch = body.match(/addr:\s*(0x[a-fA-F0-9]{40})/)
-
-          const creditsSpent = spentMatch ? Number(spentMatch[1]) : 0
-          const postCount = postMatch ? Number(postMatch[1]) : 0
-          const photoCount = photoMatch ? Number(photoMatch[1]) : 0
-          const baseAddress = addrMatch ? addrMatch[1] : null
-
-          out.push({
-            userId: `fid:${fid}`,
-            fid,
-            creditsSpent: Number.isFinite(creditsSpent) ? creditsSpent : 0,
-            postCount: Number.isFinite(postCount) ? postCount : 0,
-            photoCount: Number.isFinite(photoCount) ? photoCount : 0,
-            baseAddress,
-          })
-        }
-
-        out.sort((a, b) => b.creditsSpent - a.creditsSpent)
-        entries = out.slice(0, 50)
-      }
-    } catch {
-      // ignore
-    }
   }
 
   let meta: any = {}
@@ -413,7 +427,6 @@ export async function getRewardAddresses(userIds: string[]): Promise<Record<stri
   if (!redis) return {}
   const set = new Set(userIds.filter(Boolean))
   if (set.size === 0) return {}
-  // Fast path: fetch entire hash once; small enough for this use case.
   try {
     const raw = await redis.hgetall<Record<string, string>>(REWARD_ADDR_HASH)
     const out: Record<string, string> = {}
