@@ -656,11 +656,12 @@ export default async function handler(req: any, res: any) {
       }
 
       const latest = await getOrCreateUser(userId)
-      if (latest.credits < 1) {
-        return json(res, 402, { error: 'Not enough credits', credits: latest.credits })
+            if (latest.credits < 3) {
+        return json(res, 402, { error: 'Not enough credits (need 3)', credits: latest.credits })
       }
 
-      const after = await adjustCredits(userId, -1)
+      const after = await adjustCredits(userId, -3)
+
       charged = true
 
       try { await pushRecent(userId, 'post', { ts: Date.now(), styleId: usedStyle.id, topicTag: usedTopicTag, text }, 12) } catch {}
