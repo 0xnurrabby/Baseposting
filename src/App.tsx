@@ -727,7 +727,7 @@ export default function App() {
     }
   }, [])
 
-  const onGenerate = useCallback(async () => {
+    const onGenerate = useCallback(async () => {
     if (generating || !miniLoaded) return
 
     let id = identityRef.current
@@ -747,7 +747,12 @@ export default function App() {
     setResult('')
     try {
       await hapticImpact(capabilitiesRef.current, 'medium')
-      const out = await apiGenerate(id, '')
+
+      // ⚡ Streaming: text appears progressively as tokens arrive
+      const out = await apiGenerate(id, '', (partial) => {
+        setResult(partial)
+      })
+
       setResult(out.text)
       setCredits(out.credits)
       toast.success('Cooked :)')
