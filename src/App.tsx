@@ -11,7 +11,7 @@ import { RoadmapBell } from '@/components/RoadmapBell'
 import { LeaderboardPage } from '@/components/LeaderboardPage'
 import { LeaderboardIcon } from '@/components/LeaderboardIcon'
 import { apiGenerate, apiGenerateImage, apiMe, apiShareAward, apiVerifyTx, type Identity } from '@/lib/api'
-import { composeCast, connectWalletProvider, getEthereumProvider, hapticImpact, hapticSelection, initMiniApp, listAvailableWallets, type MiniAppUser, type WalletOption } from '@/lib/miniapp'
+import { composeCast, connectWalletProvider, getEthereumProvider, hapticImpact, hapticSelection, initMiniApp, listAvailableWallets, type WalletOption } from '@/lib/miniapp'
 
 const CONTRACT = '0xB331328F506f2D35125e367A190e914B1b6830cF'
 
@@ -29,8 +29,8 @@ const LOG_ACTION_ABI = [
 ] as const
 
 const SITE_URL = import.meta.env.VITE_PUBLIC_SITE_URL || window.location.origin
-
 const WALLET_CREDIT_KEY = 'bp_credits_cache_v1'
+const PENDING_TX_KEY = 'bp_pending_tx_v1'
 
 const SHARE_COPY_TEMPLATES = [
   'Okay this is actually useful 💙 I used to get stuck every day thinking: “What should I post on Base?” 😵‍💫 Now I just open BasePosting — one tap gives banger post ideas + images in seconds. Try it: {url}',
@@ -96,14 +96,11 @@ function getRotatingShareCopy(siteUrl: string) {
   return SHARE_COPY_TEMPLATES[idx]?.replace('{url}', url) ?? `Try it: ${url}`
 }
 
-// Tip (USDC) requirements
 const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
 const USDC_DECIMALS = 6
-
 const RECIPIENT =
   import.meta.env.VITE_TIP_RECIPIENT ||
   '0xe8Bda2Ed9d2FC622D900C8a76dc455A3e79B041f'
-
 const PAYMASTER_SERVICE_URL = (import.meta.env.VITE_PAYMASTER_SERVICE_URL || '').trim()
 
 function isUserRejection(e: any) {
@@ -167,7 +164,6 @@ function encodeErc20Transfer(recipient: string, amount: bigint) {
   return `0x${selector}${to}${val}`
 }
 
-// Race a promise with a timeout — whichever completes first wins.
 function raceWithTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   return new Promise((resolve) => {
     let done = false
@@ -190,6 +186,62 @@ function raceWithTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> 
   })
 }
 
+// ---------------------------------------------------------------------------
+// Estimated-time countdown for loading buttons
+// ---------------------------------------------------------------------------
+function useEstimatedCountdown(active: boolean, estimateSec: number) {
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    if (!active) {
+      setElapsed(0)
+      return
+    }
+    const startedAt = Date.now()
+    const t = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startedAt) / 1000))
+    }, 500)
+    return () => clearInterval(t)
+  }, [active])
+
+  const remaining = Math.max(0, estimateSec - elapsed)
+  const label =
+    elapsed < 2
+      ? 'Starting…'
+      : remaining > 0
+        ? `Cooking… ~${remaining}s left`
+        : 'Finalizing, almost there…'
+
+  const progress = Math.min(0.98, elapsed / Math.max(1, estimateSec))
+  return { elapsed, remaining, label, progress }
+}
+
+function LoadingLabel(props: { active: boolean; estimateSec: number; idleText: string; icon?: React.ReactNode }) {
+  const { label, progress } = useEstimatedCountdown(props.active, props.estimateSec)
+  if (!props.active) {
+    return (
+      <>
+        {props.icon}
+        {props.idleText}
+      </>
+    )
+  }
+  return (
+    <span className="relative flex w-full items-center justify-center gap-2 overflow-hidden">
+      <span
+        aria-hidden
+        className="absolute inset-y-0 left-0 rounded-full bg-white/15 transition-[width] duration-500 ease-out"
+        style={{ width: `${Math.round(progress * 100)}%` }}
+      />
+      <span className="relative flex items-center gap-1.5">
+        <span className="h-2 w-2 animate-pulse rounded-full bg-current opacity-70" />
+        <span className="h-2 w-2 animate-pulse rounded-full bg-current opacity-70 [animation-delay:150ms]" />
+        <span className="h-2 w-2 animate-pulse rounded-full bg-current opacity-70 [animation-delay:300ms]" />
+      </span>
+      <span className="relative ml-1 text-sm font-semibold">{label}</span>
+    </span>
+  )
+}
+
 export default function App() {
   const [mounted, setMounted] = useState(false)
   const [dark, setDark] = useState(true)
@@ -197,12 +249,12 @@ export default function App() {
   const [miniLoaded, setMiniLoaded] = useState(false)
   const [isInMiniApp, setIsInMiniApp] = useState(false)
   const [capabilities, setCapabilities] = useState<string[]>([])
-
-  // Kept for API compatibility (passed to listAvailableWallets), but we no longer
-  // render Farcaster user info in the header.
   const [miniClient, setMiniClient] = useState<any | null>(null)
 
-  // identity: WALLET-FIRST. We always prefer `address`; `fid` stays undefined.
+  // Guard: once miniLoaded becomes true, we do NOT run the boot effect's
+  // state setters again — this kills the flicker on Base app.
+  const bootAppliedRef = useRef(false)
+
   const [identity, setIdentity] = useState<Identity>({})
   const [view, setView] = useState<'home' | 'leaderboard'>('home')
   const [credits, setCredits] = useState<number | null>(null)
@@ -225,6 +277,9 @@ export default function App() {
   const [posting, setPosting] = useState(false)
   const [sharing, setSharing] = useState(false)
   const [gettingCredit, setGettingCredit] = useState(false)
+
+  // Pending tx verification survives tab backgrounding / navigation / reload.
+  const verifyInFlight = useRef<string>('')
 
   const [walletConnecting, setWalletConnecting] = useState(false)
   const [walletModalOpen, setWalletModalOpen] = useState(false)
@@ -414,6 +469,7 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fid, appFid, nid }),
+        keepalive: true,
       }).catch(() => {})
     }
 
@@ -442,46 +498,49 @@ export default function App() {
     return () => clearTimeout(t)
   }, [tipOpen, tipStage])
 
-  // ============================================================
-  // BOOT — TIMEOUT-PROOF
-  // ============================================================
-  // The Base app / Farcaster webview sometimes hangs on sdk.isInMiniApp()
-  // or sdk.getCapabilities(). We race initMiniApp() against a hard 1.5s
-  // timeout so the UI NEVER gets stuck on the skeleton screen.
-  //
-  // After we finish booting, if we're inside a mini app host, we auto
-  // attempt to pull the injected wallet provider so the user lands in
-  // the app already-connected (same UX as "wallet connect" in a browser).
-  // ============================================================
+  // ==========================================================================
+  // BOOT — FLICKER-PROOF
+  // ==========================================================================
   useEffect(() => {
     let cancelled = false
 
-    const boot = async () => {
-      // 1) Race initMiniApp() with a 1.5s timeout. If SDK hangs, we fall back
-      //    to "browser mode" (isInMiniApp=false) so the UI renders immediately.
-      const state = await raceWithTimeout(
-        initMiniApp(),
-        1500,
-        { isInMiniApp: false, capabilities: [], user: null, client: null } as any
-      )
-
-      if (cancelled) return
-
+    const applyState = (state: any) => {
+      if (cancelled || bootAppliedRef.current) return
+      bootAppliedRef.current = true
       setIsInMiniApp(Boolean(state?.isInMiniApp))
       setCapabilities(Array.isArray(state?.capabilities) ? state.capabilities : [])
       setMiniClient(state?.client || null)
-      // IMPORTANT: we intentionally ignore state.user.fid. Identity is now
-      // wallet-based only, so the app behaves the same in Base / Farcaster /
-      // normal browser.
       setMiniLoaded(true)
+    }
 
-      // 2) If we're inside a mini-app host (Base app, Warpcast), try to
-      //    auto-connect the host's injected wallet. This matches how the
-      //    app worked before (auto-ready) without needing a Farcaster login.
+    const boot = async () => {
+      // Race: use initMiniApp() result OR a 1.5s fallback — whichever first.
+      const timeoutFallback = new Promise<any>((resolve) =>
+        setTimeout(() => resolve({ isInMiniApp: false, capabilities: [], user: null, client: null }), 1500)
+      )
+
+      const winner = await Promise.race([initMiniApp(), timeoutFallback])
+      applyState(winner)
+
+      // If timeout won, wait a bit more for the real SDK to finish — but
+      // DO NOT touch render-affecting state anymore (bootAppliedRef is set).
+      // We only use the real result for auto-connecting the miniapp wallet.
+      let realState: any = winner
       try {
-        if (state?.isInMiniApp) {
+        realState = await Promise.race([
+          initMiniApp(),
+          new Promise<any>((resolve) => setTimeout(() => resolve(winner), 3000)),
+        ])
+      } catch {
+        realState = winner
+      }
+
+      if (cancelled) return
+
+      try {
+        if (realState?.isInMiniApp) {
           const wallets = await raceWithTimeout(
-            listAvailableWallets({ isInMiniApp: true, client: state.client }),
+            listAvailableWallets({ isInMiniApp: true, client: realState.client }),
             2500,
             [] as WalletOption[]
           )
@@ -489,7 +548,7 @@ export default function App() {
           if (host && !cancelled) {
             try {
               const { address } = await raceWithTimeout(
-                connectWalletProvider(host, { isInMiniApp: true, client: state.client }),
+                connectWalletProvider(host, { isInMiniApp: true, client: realState.client }),
                 4000,
                 { address: '' } as any
               )
@@ -503,7 +562,7 @@ export default function App() {
                 }
               }
             } catch {
-              // user hasn't granted wallet yet — they can tap "Connect Wallet"
+              // user will tap Connect Wallet
             }
           }
         }
@@ -538,6 +597,101 @@ export default function App() {
 
     void load()
   }, [identity.address, miniLoaded])
+
+  // ==========================================================================
+  // RESUMABLE TX VERIFY
+  // ==========================================================================
+
+  function savePendingTx(txHash: string, addr: string) {
+    try {
+      localStorage.setItem(
+        PENDING_TX_KEY,
+        JSON.stringify({ txHash, address: addr.toLowerCase(), ts: Date.now() })
+      )
+    } catch {
+      // ignore
+    }
+  }
+
+  function clearPendingTx() {
+    try {
+      localStorage.removeItem(PENDING_TX_KEY)
+    } catch {
+      // ignore
+    }
+  }
+
+  function readPendingTx(): { txHash: string; address: string; ts: number } | null {
+    try {
+      const raw = localStorage.getItem(PENDING_TX_KEY)
+      if (!raw) return null
+      const parsed = JSON.parse(raw)
+      if (!parsed?.txHash || !parsed?.address) return null
+      // Expire anything older than 2 hours so we don't retry forever.
+      if (Date.now() - Number(parsed.ts || 0) > 2 * 60 * 60 * 1000) {
+        clearPendingTx()
+        return null
+      }
+      return parsed
+    } catch {
+      return null
+    }
+  }
+
+  async function verifyCreditTxInBackground(id: Identity, txHash: string) {
+    if (verifyInFlight.current === txHash) return
+    verifyInFlight.current = txHash
+
+    const pollMs = 2500
+    let softNoticeShown = false
+
+    try {
+      while (true) {
+        try {
+          const out = await apiVerifyTx(id, txHash)
+          if (!out.pending) {
+            setCredits(out.credits)
+            toast.success(out.alreadyCounted ? 'Credit already added' : 'Txn verified. +1 credit added 💙')
+            clearPendingTx()
+            return out
+          }
+        } catch (e: any) {
+          const msg = String(e?.message || '').toLowerCase()
+          const retriable =
+            e?.name === 'AbortError' ||
+            msg.includes('timed out') ||
+            msg.includes('failed to fetch') ||
+            msg.includes('networkerror') ||
+            msg.includes('load failed') ||
+            msg.includes('aborted')
+          if (!retriable) {
+            clearPendingTx()
+            throw e
+          }
+        }
+
+        if (!softNoticeShown) {
+          softNoticeShown = true
+          toast.message('Still confirming onchain. You can close the app — credit will be added automatically.')
+        }
+        await new Promise((r) => setTimeout(r, pollMs))
+      }
+    } finally {
+      if (verifyInFlight.current === txHash) {
+        verifyInFlight.current = ''
+      }
+    }
+  }
+
+  // On boot / on wallet connect, auto-resume any pending tx verification.
+  useEffect(() => {
+    if (!miniLoaded || !identity.address) return
+    const pending = readPendingTx()
+    if (!pending) return
+    if (pending.address !== identity.address.toLowerCase()) return
+    void verifyCreditTxInBackground({ address: identity.address }, pending.txHash)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [miniLoaded, identity.address])
 
   async function onCreateWallet() {
     await openWalletPicker()
@@ -746,7 +900,6 @@ export default function App() {
     setSharing(true)
     try {
       await hapticImpact(capabilities, 'medium')
-
       const shareUrl = normalizeSiteUrl(SITE_URL)
       const shareText = getRotatingShareCopy(SITE_URL)
       setPendingToast('message', 'Welcome back ✅ Adding your share bonus…')
@@ -823,11 +976,7 @@ export default function App() {
 
       const action = keccak256(toHex('BASEPOSTING_GET_CREDIT'))
       const payload = toHex(
-        JSON.stringify({
-          address: addr,
-          ts: Date.now(),
-          app: 'BasePosting',
-        }),
+        JSON.stringify({ address: addr, ts: Date.now(), app: 'BasePosting' })
       )
 
       const data = encodeFunctionData({
@@ -881,7 +1030,7 @@ export default function App() {
           throw new Error('wallet_sendCalls did not return a valid confirmation id.')
         }
 
-        toast.message('Transaction submitted. Waiting for confirmation...')
+        toast.message('Transaction submitted. You can close the app — credit will be added automatically.')
         txHash = /^0x[a-fA-F0-9]{64}$/.test(confirmationId)
           ? confirmationId
           : await waitForCallsTxHash(provider, confirmationId, { timeoutMs: 20000, pollMs: 1200 })
@@ -897,11 +1046,18 @@ export default function App() {
 
         const tx = { from: addr, to: CONTRACT, value: '0x0', data: dataWithSuffix }
         txHash = (await provider.request({ method: 'eth_sendTransaction', params: [tx] })) as string
-        toast.message('Transaction submitted. Waiting for confirmation...')
+        toast.message('Transaction submitted. You can close the app — credit will be added automatically.')
       }
 
-      toast.message('Transaction submitted. Waiting for block confirmation...')
+      // PERSIST the pending tx — survives backgrounding, navigation, reload.
+      savePendingTx(txHash, addr)
+
+      // Start background verification; DO NOT await, so the user is free
+      // to leave this screen / switch tabs / close the app.
       void verifyCreditTxInBackground({ address: addr }, txHash)
+
+      // Free up the button immediately.
+      setGettingCredit(false)
     } catch (e: any) {
       if (isUserRejection(e)) {
         toast.message('Transaction cancelled')
@@ -911,7 +1067,6 @@ export default function App() {
       } else {
         toast.error(e?.message || 'Transaction failed')
       }
-    } finally {
       setGettingCredit(false)
     }
   }
@@ -1004,9 +1159,7 @@ export default function App() {
         from: addr,
         chainId: '0x2105',
         atomicRequired: true,
-        calls: [
-          { to: USDC_CONTRACT, value: '0x0', data },
-        ],
+        calls: [{ to: USDC_CONTRACT, value: '0x0', data }],
         ...(dataSuffix
           ? { capabilities: { dataSuffix: { value: dataSuffix, optional: true } } }
           : {}),
@@ -1017,9 +1170,7 @@ export default function App() {
         from: addr,
         chainId: '0x2105',
         atomicRequired: true,
-        calls: [
-          { to: USDC_CONTRACT, value: '0x0', data: dataWithSuffix },
-        ],
+        calls: [{ to: USDC_CONTRACT, value: '0x0', data: dataWithSuffix }],
       }
 
       try {
@@ -1059,37 +1210,6 @@ export default function App() {
   function closeTip() {
     setTipOpen(false)
     setTipStage('idle')
-  }
-
-  async function verifyCreditTxInBackground(id: Identity, txHash: string) {
-    const pollMs = 1800
-    let softNoticeShown = false
-    while (true) {
-      try {
-        const out = await apiVerifyTx(id, txHash)
-        if (!out.pending) {
-          setCredits(out.credits)
-          toast.success(out.alreadyCounted ? 'Credit already added' : 'Txn verified. +1 credit added')
-          return out
-        }
-      } catch (e: any) {
-        const msg = String(e?.message || '').toLowerCase()
-        const retriable =
-          e?.name === 'AbortError' ||
-          msg.includes('timed out') ||
-          msg.includes('failed to fetch') ||
-          msg.includes('networkerror') ||
-          msg.includes('load failed') ||
-          msg.includes('aborted')
-        if (!retriable) throw e
-      }
-
-      if (!softNoticeShown) {
-        softNoticeShown = true
-        toast.message('Still confirming onchain... credit will be added automatically.')
-      }
-      await new Promise((r) => setTimeout(r, pollMs))
-    }
   }
 
   const creditsLabel = credits === null ? '—' : String(credits)
@@ -1174,12 +1294,16 @@ export default function App() {
                     <Button
                       className="w-full"
                       variant="primary"
-                      isLoading={generating}
-                      disabled={!canGenerate}
+                      isLoading={false}
+                      disabled={!canGenerate || generating}
                       onClick={() => void onGenerate(false)}
                     >
-                      <Sparkles className="h-4 w-4" />
-                      {generating ? 'Working…' : 'Generate (-1c)'}
+                      <LoadingLabel
+                        active={generating}
+                        estimateSec={20}
+                        idleText="Generate (-1c)"
+                        icon={<Sparkles className="h-4 w-4" />}
+                      />
                     </Button>
 
                     <div className="flex flex-col gap-2 sm:flex-row">
@@ -1261,25 +1385,29 @@ export default function App() {
 
                         <motion.div
                           animate={
-                            result
+                            result && !generatingImage
                               ? { scale: [1, 1.06, 1], y: [0, -1, 0] }
                               : { scale: 1, y: 0 }
                           }
                           transition={
-                            result
+                            result && !generatingImage
                               ? { duration: 0.9, repeat: Infinity, repeatDelay: 1.2, ease: 'easeInOut' }
                               : { duration: 0 }
                           }
                         >
                           <Button
                             variant={result ? 'success' : 'attention'}
-                            isLoading={generatingImage}
-                            disabled={!result || generating || posting}
+                            isLoading={false}
+                            disabled={!result || generating || posting || generatingImage}
                             onClick={() => void onGeneratePhoto()}
                             className="px-5 py-2.5 text-sm"
                           >
-                            <ImageIcon className="h-4 w-4" />
-                            Generate Photo (-5c)
+                            <LoadingLabel
+                              active={generatingImage}
+                              estimateSec={35}
+                              idleText="Generate Photo (-5c)"
+                              icon={<ImageIcon className="h-4 w-4" />}
+                            />
                           </Button>
                         </motion.div>
                       </div>
