@@ -56,23 +56,23 @@ BasePosting is a Farcaster mini app that generates high-quality, on-brand social
 
 ## `{ features }`
 
-![](https://img.shields.io/badge/âœ“-AI_Post_Generation_(-3_credits)-B8F0D8?style=flat-square&labelColor=1a1a1a)
+![](https://img.shields.io/badge/FEAT-AI_Post_Generation_(-3_credits)-B8F0D8?style=flat-square&labelColor=1a1a1a)
 
-![](https://img.shields.io/badge/âœ“-Onchain_Credit_System_on_Base_Mainnet-B3D9FF?style=flat-square&labelColor=1a1a1a)
+![](https://img.shields.io/badge/FEAT-Onchain_Credit_System_on_Base_Mainnet-B3D9FF?style=flat-square&labelColor=1a1a1a)
 
-![](https://img.shields.io/badge/âœ“-Farcaster_Mini_App_Integration-FFF4A8?style=flat-square&labelColor=1a1a1a)
+![](https://img.shields.io/badge/FEAT-Farcaster_Mini_App_Integration-FFF4A8?style=flat-square&labelColor=1a1a1a)
 
-![](https://img.shields.io/badge/âœ“-Multi--wallet_Support_(MetaMask,_Rabby,_OKX,_Bitget...)-FFD4A8?style=flat-square&labelColor=1a1a1a)
+![](https://img.shields.io/badge/FEAT-Multi--wallet_Support_(MetaMask,_Rabby,_OKX,_Bitget...)-FFD4A8?style=flat-square&labelColor=1a1a1a)
 
-![](https://img.shields.io/badge/âœ“-One--click_Post_to_X_(Twitter)-FFB3D9?style=flat-square&labelColor=1a1a1a)
+![](https://img.shields.io/badge/FEAT-One--click_Post_to_X_(Twitter)-FFB3D9?style=flat-square&labelColor=1a1a1a)
 
-![](https://img.shields.io/badge/âœ“-Share_for_6_Credits_Daily_Bonus-FFB3B3?style=flat-square&labelColor=1a1a1a)
+![](https://img.shields.io/badge/FEAT-Share_for_6_Credits_Daily_Bonus-FFB3B3?style=flat-square&labelColor=1a1a1a)
 
-![](https://img.shields.io/badge/âœ“-Global_Leaderboard-D4B3FF?style=flat-square&labelColor=1a1a1a)
+![](https://img.shields.io/badge/FEAT-Global_Leaderboard-D4B3FF?style=flat-square&labelColor=1a1a1a)
 
-![](https://img.shields.io/badge/âœ“-USDC_Tip_Support_on_Base-B8F0D8?style=flat-square&labelColor=1a1a1a)
+![](https://img.shields.io/badge/FEAT-USDC_Tip_Support_on_Base-B8F0D8?style=flat-square&labelColor=1a1a1a)
 
-![](https://img.shields.io/badge/âœ“-Dark_/_Light_Theme-B3D9FF?style=flat-square&labelColor=1a1a1a)
+![](https://img.shields.io/badge/FEAT-Dark_/_Light_Theme-B3D9FF?style=flat-square&labelColor=1a1a1a)
 
 ---
 
@@ -107,26 +107,26 @@ npm run build
 
 ```
 Baseposting/
-â”œâ”€â”€ api/                  # Vercel serverless functions
-â”‚   â”œâ”€â”€ generate.ts       # AI post generation endpoint
-â”‚   â”œâ”€â”€ generate-image.ts # Image generation (temp disabled)
-â”‚   â”œâ”€â”€ leaderboard.ts    # Leaderboard data
-â”‚   â”œâ”€â”€ verify-tx.ts      # Onchain tx verification
-â”‚   â””â”€â”€ notif/            # Farcaster notification handlers
-â”œâ”€â”€ src/
-â”‚   â”œâ”€â”€ components/       # React UI components
-â”‚   â”‚   â”œâ”€â”€ Button.tsx
-â”‚   â”‚   â”œâ”€â”€ Card.tsx
-â”‚   â”‚   â”œâ”€â”€ LeaderboardPage.tsx
-â”‚   â”‚   â””â”€â”€ ...
-â”‚   â”œâ”€â”€ lib/              # Wallet, chain, API utils
-â”‚   â”œâ”€â”€ App.tsx           # Main app component
-â”‚   â””â”€â”€ main.tsx          # Entry point
-â”œâ”€â”€ public/               # Static assets
-â”œâ”€â”€ index.html
-â”œâ”€â”€ vite.config.ts
-â”œâ”€â”€ tailwind.config.cjs
-â””â”€â”€ vercel.json
+|-- api/                  # Vercel serverless functions
+|   |-- generate.ts       # AI post generation endpoint
+|   |-- generate-image.ts # Image generation (temp disabled)
+|   |-- leaderboard.ts    # Leaderboard data
+|   |-- verify-tx.ts      # Onchain tx verification
+|   +-- notif/            # Farcaster notification handlers
+|-- src/
+|   |-- components/       # React UI components
+|   |   |-- Button.tsx
+|   |   |-- Card.tsx
+|   |   |-- LeaderboardPage.tsx
+|   |   +-- ...
+|   |-- lib/              # Wallet, chain, API utils
+|   |-- App.tsx           # Main app component
+|   +-- main.tsx          # Entry point
+|-- public/               # Static assets
+|-- index.html
+|-- vite.config.ts
+|-- tailwind.config.cjs
++-- vercel.json
 ```
 
 ---
