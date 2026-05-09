@@ -997,7 +997,7 @@ const nonceHex = await provider.request({
         const msg = String(e?.message || '').toLowerCase()
         if (msg.includes('nonce too low') || msg.includes('nonce') || msg.includes('replacement transaction underpriced')) {
           toast.error(
-            '⚠️ Nonce mismatch detected. To fix: open your wallet (MetaMask / OKX / Rabby) → Settings → Advanced → Reset Account (or Clear Activity Data). Your funds are safe — this only clears local tx history. Then try again.'
+            '⚠️ Nonce mismatch! Wallet → Settings → Advanced → Reset Account (MetaMask) / Clear Activity (OKX) / Reset (Rabby). Fund eill be safe, just local history will be cleared। then try again।'
           )
         } else {
           toast.error(e?.message || 'Transaction failed')
