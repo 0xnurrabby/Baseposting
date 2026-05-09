@@ -932,10 +932,16 @@ export default function App() {
             'Your wallet has 0 Base ETH to pay gas. Please add a small amount of ETH on Base (use bridge.base.org) and retry.'
           )
         }
+const nonceHex = await provider.request({
+          method: 'eth_getTransactionCount',
+          params: [addr, 'pending'],
+        }) as string
+
         const tx: any = {
           from: addr,
           to: CONTRACT,
           data,
+          nonce: nonceHex,
         }
         return (await provider.request({ method: 'eth_sendTransaction', params: [tx] })) as string
       }
@@ -984,11 +990,18 @@ export default function App() {
       savePendingTx(txHash, addr)
       setSubmittingCredit(false)
       await verifyCreditTxInBackground({ address: addr }, txHash)
-    } catch (e: any) {
+} catch (e: any) {
       if (isUserRejection(e)) {
         toast.message('Transaction cancelled')
       } else {
-        toast.error(e?.message || 'Transaction failed')
+        const msg = String(e?.message || '').toLowerCase()
+        if (msg.includes('nonce too low') || msg.includes('nonce') || msg.includes('replacement transaction underpriced')) {
+          toast.error(
+            '⚠️ Nonce mismatch detected. To fix: open your wallet (MetaMask / OKX / Rabby) → Settings → Advanced → Reset Account (or Clear Activity Data). Your funds are safe — this only clears local tx history. Then try again.'
+          )
+        } else {
+          toast.error(e?.message || 'Transaction failed')
+        }
       }
       setSubmittingCredit(false)
       setVerifyingCredit(false)
