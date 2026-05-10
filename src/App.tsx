@@ -263,6 +263,7 @@ export default function App() {
 
   const [submittingCredit, setSubmittingCredit] = useState(false)
   const [creditAdded, setCreditAdded] = useState(false)
+  const creditClaimInFlight = useRef(false)
 
   const [walletConnecting, setWalletConnecting] = useState(false)
   const [walletModalOpen, setWalletModalOpen] = useState(false)
@@ -366,7 +367,10 @@ export default function App() {
           if (!handledShareAward) {
             try {
               const me = await apiMe(id)
-              setCredits(me.user.credits)
+              // Do NOT overwrite credits if a claim is still in flight
+              if (!creditClaimInFlight.current) {
+                setCredits(me.user.credits)
+              }
               setShareEligible(me.share.canClaimToday)
               setTodayUtc(me.share.todayUtc)
             } catch {
@@ -522,7 +526,7 @@ export default function App() {
       setLoadingMe(true)
       try {
         const me = await apiMe(identity)
-        setCredits(me.user.credits)
+        if (!creditClaimInFlight.current) setCredits(me.user.credits)
         setShareEligible(me.share.canClaimToday)
         setTodayUtc(me.share.todayUtc)
       } catch (e: any) {
@@ -537,15 +541,18 @@ export default function App() {
 
 
   function triggerCreditAdded(id: Identity) {
-    // Optimistic update — show +1 immediately
+    // Mark claim in flight — blocks apiMe from overwriting credits until server confirms
+    creditClaimInFlight.current = true
     setCredits((prev) => (prev == null ? 1 : prev + 1))
     setCreditAdded(true)
     setTimeout(() => setCreditAdded(false), 2500)
-    // Persist to server in background — updates real credits so apiMe won't overwrite
+    // Persist to server — get authoritative credit count back
     void apiClaimCredit(id).then((res) => {
       setCredits(res.credits)
     }).catch(() => {
       // ignore — optimistic count stays
+    }).finally(() => {
+      creditClaimInFlight.current = false
     })
   }
 
@@ -606,7 +613,7 @@ export default function App() {
       setLoadingMe(true)
       try {
         const me = await apiMe(nextIdentity)
-        setCredits(me.user.credits)
+        if (!creditClaimInFlight.current) setCredits(me.user.credits)
         setShareEligible(me.share.canClaimToday)
         setTodayUtc(me.share.todayUtc)
       } catch {
@@ -634,7 +641,7 @@ export default function App() {
     if (!id.address) return
     try {
       const me = await apiMe(id)
-      setCredits(me.user.credits)
+      if (!creditClaimInFlight.current) setCredits(me.user.credits)
       setShareEligible(me.share.canClaimToday)
       setTodayUtc(me.share.todayUtc)
     } catch {
