@@ -576,7 +576,7 @@ export default function App() {
     verifyInFlight.current = txHash
     setVerifyingCredit(true)
 
-    const pollMs = 2500
+    const pollMs = 1500
     let softNoticeShown = false
 
     try {
@@ -1207,7 +1207,7 @@ const nonceHex = await provider.request({
                       >
                         <LoadingLabel
                           active={creditBusy}
-                          estimateSec={submittingCredit ? 20 : 45}
+                          estimateSec={submittingCredit ? 20 : 8}
                           idleText="Get Credit"
                           icon={<Wallet className="h-4 w-4" />}
                           loadingText={creditLoadingText}

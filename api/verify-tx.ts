@@ -40,7 +40,7 @@ async function rpc(method: string, params: any[]) {
   }
 }
 
-async function waitForReceipt(txHash: string, timeoutMs = 1200, pollMs = 1200) {
+async function waitForReceipt(txHash: string, timeoutMs = 7000, pollMs = 800) {
   const started = Date.now()
   while (Date.now() - started < timeoutMs) {
     const receipt = await rpc('eth_getTransactionReceipt', [txHash])

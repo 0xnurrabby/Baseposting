@@ -406,18 +406,50 @@ function pickStyle(recentIds: string[]): StyleDeck {
   return weightedPick(STYLE_DECK, new Set(recentIds), (s) => s.id)
 }
 
+// All available topic tags — used for forced rotation
+const ALL_TOPIC_TAGS = ['onchain-social', 'builders', 'fees-speed', 'defi', 'security', 'nft-creator', 'culture', 'onboarding']
+
 function pickTopicTag(posts: Array<{ text: string }>, recentTags: string[]): string {
+  // Build a set of recently used tags (last 4)
+  const recentSet = new Set(recentTags.slice(0, 4))
+
+  // 40% of the time: force a completely random tag that wasn't used recently
+  // This ensures variety even when Apify scrapes are dominated by one topic
+  if (Math.random() < 0.40) {
+    const fresh = ALL_TOPIC_TAGS.filter((t) => !recentSet.has(t))
+    if (fresh.length > 0) {
+      return fresh[Math.floor(Math.random() * fresh.length)]
+    }
+  }
+
   const corpus = posts.map((p) => p.text.toLowerCase()).join(' ')
   const scores = TOPIC_TAGS.map(({ tag, keywords }) => {
     let score = 0
     for (const kw of keywords) if (corpus.includes(kw)) score += 1
-    if (recentTags.includes(tag)) score *= 0.3
+
+    // Strong penalty for recently used tags — make them much less likely
+    if (recentTags[0] === tag) score *= 0.05  // last used: almost never
+    else if (recentTags[1] === tag) score *= 0.1
+    else if (recentSet.has(tag)) score *= 0.2
+
+    // Add a small random noise so equal-score topics vary
+    score += Math.random() * 0.5
+
     return { tag, score }
   })
+
   scores.sort((a, b) => b.score - a.score)
-  const topN = scores.slice(0, 3).filter((s) => s.score > 0)
-  if (topN.length === 0) return 'builders'
-  return topN[Math.floor(Math.random() * topN.length)].tag
+
+  // Pick from top 4 candidates with weighted random — not always the top scorer
+  const topN = scores.slice(0, 4)
+  const total = topN.reduce((s, x) => s + Math.max(0.01, x.score), 0)
+  let roll = Math.random() * total
+  for (const item of topN) {
+    roll -= Math.max(0.01, item.score)
+    if (roll <= 0) return item.tag
+  }
+
+  return topN[0]?.tag || 'builders'
 }
 
 function pickSourcePosts(posts: Array<{ author: string; text: string }>, topicTag: string, limit: number) {
