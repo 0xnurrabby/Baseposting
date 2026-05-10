@@ -540,7 +540,6 @@ export default function App() {
     setCredits((prev) => (prev == null ? 1 : prev + 1))
     setCreditAdded(true)
     setTimeout(() => setCreditAdded(false), 2500)
-    toast.success('+1 credit added 💙')
   }
 
   const openWalletPicker = useCallback(async () => {
