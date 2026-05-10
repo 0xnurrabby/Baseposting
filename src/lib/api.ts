@@ -109,8 +109,8 @@ export async function apiVerifyTx(identity: Identity, txHash: string) {
 
 export async function apiClaimCredit(identity: Identity) {
   return await postJson<{ ok: boolean; credits: number }>(
-    '/api/claim-credit',
-    { ...identity },
+    '/api/me',
+    { ...identity, action: 'claim' },
   )
 }
 

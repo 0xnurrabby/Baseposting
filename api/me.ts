@@ -1,4 +1,4 @@
-import { canClaimShareBonus, getOrCreateUser } from './_lib/store.js'
+import { adjustCredits, canClaimShareBonus, getOrCreateUser, incrementMetric } from './_lib/store.js'
 import { handleOptions, json, readJson, requirePost, setCors } from './_lib/http.js'
 import { migrateFidToAddressIfPossible } from './_lib/leaderboard.js'
 
@@ -26,8 +26,18 @@ export default async function handler(req: any, res: any) {
   const userId = toUserId(body)
   if (!userId) return json(res, 400, { error: 'Missing user identity (fid or address)' })
 
-  // When user connects wallet, try to merge their legacy fid-based data into
-  // their new addr-based account. Idempotent + fast (skip if already merged).
+  // action=claim — add +1 credit after wallet confirmation (no onchain verify needed)
+  if (body?.action === 'claim') {
+    try {
+      await incrementMetric(userId, 'txCount', 1, 1)
+      const updated = await adjustCredits(userId, +1)
+      return json(res, 200, { ok: true, credits: updated.credits })
+    } catch (e: any) {
+      return json(res, 500, { error: e?.message || 'Failed to add credit' })
+    }
+  }
+
+  // Default: return user info
   if (userId.startsWith('addr:')) {
     const addr = userId.slice(5)
     try {

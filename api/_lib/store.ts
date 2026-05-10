@@ -207,7 +207,7 @@ async function rebuildAdminSummaries(redis: any) {
 
   const fetchUser = async (id: string): Promise<UserRecord | null> => {
     try {
-      const data = await redis.hgetall<Record<string, string>>(`user:${id}`)
+      const data = await (redis.hgetall as (key: string) => Promise<Record<string, string> | null>)(`user:${id}`)
       if (!data || Object.keys(data).length === 0) return null
       return {
         id: data.id || id,
