@@ -107,6 +107,13 @@ export async function apiVerifyTx(identity: Identity, txHash: string) {
   )
 }
 
+export async function apiClaimCredit(identity: Identity) {
+  return await postJson<{ ok: boolean; credits: number }>(
+    '/api/claim-credit',
+    { ...identity },
+  )
+}
+
 export async function apiShareAward(identity: Identity) {
   return await postJson<{ ok: boolean; alreadyClaimed: boolean; credits: number; todayUtc: string }>(
     '/api/share-award',

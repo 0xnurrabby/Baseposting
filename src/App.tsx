@@ -9,7 +9,7 @@ import { Skeleton } from '@/components/Skeleton'
 import { RoadmapBell } from '@/components/RoadmapBell'
 import { LeaderboardPage } from '@/components/LeaderboardPage'
 import { LeaderboardIcon } from '@/components/LeaderboardIcon'
-import { apiGenerate, apiMe, apiShareAward, type Identity } from '@/lib/api'
+import { apiClaimCredit, apiGenerate, apiMe, apiShareAward, type Identity } from '@/lib/api'
 import { connectWalletProvider, getEthereumProvider, hapticImpact, hapticSelection, initMiniApp, listAvailableWallets, shareToTwitter, type WalletOption } from '@/lib/miniapp'
 
 const CONTRACT = '0xB331328F506f2D35125e367A190e914B1b6830cF'
@@ -536,10 +536,17 @@ export default function App() {
   }, [identity.address, miniLoaded])
 
 
-  function triggerCreditAdded() {
+  function triggerCreditAdded(id: Identity) {
+    // Optimistic update — show +1 immediately
     setCredits((prev) => (prev == null ? 1 : prev + 1))
     setCreditAdded(true)
     setTimeout(() => setCreditAdded(false), 2500)
+    // Persist to server in background — updates real credits so apiMe won't overwrite
+    void apiClaimCredit(id).then((res) => {
+      setCredits(res.credits)
+    }).catch(() => {
+      // ignore — optimistic count stays
+    })
   }
 
   const openWalletPicker = useCallback(async () => {
@@ -855,8 +862,8 @@ export default function App() {
       }
 
       if (sent) {
-        // Wallet confirmed the txn — add credit immediately, no onchain verification needed
-        triggerCreditAdded()
+        // Wallet confirmed the txn — add credit immediately, persist in background
+        triggerCreditAdded({ address: addr })
         await hapticImpact(capabilitiesRef.current, 'medium')
       }
 
