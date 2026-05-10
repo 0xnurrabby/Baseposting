@@ -576,15 +576,14 @@ export default function App() {
     verifyInFlight.current = txHash
     setVerifyingCredit(true)
 
-    const pollMs = 1500
-    let softNoticeShown = false
+    // Server now polls internally for up to 15s — frontend just calls once and waits.
+    // Only retry if server returns pending (>15s confirmation, very rare on Base)
+    // or if the request itself failed (network error).
+    const maxRetries = 4
+    const retryDelayMs = 3000
 
     try {
-      let attempts = 0
-      const maxVisibleAttempts = 72
-
-      while (true) {
-        attempts++
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
           const out = await apiVerifyTx(id, txHash)
           if (!out.pending) {
@@ -593,6 +592,8 @@ export default function App() {
             clearPendingTx()
             return out
           }
+          // Server returned pending (tx took >15s) — wait briefly and retry once
+          await new Promise((r) => setTimeout(r, retryDelayMs))
         } catch (e: any) {
           const msg = String(e?.message || '').toLowerCase()
           const retriable =
@@ -606,17 +607,13 @@ export default function App() {
             clearPendingTx()
             throw e
           }
+          if (attempt < maxRetries - 1) {
+            await new Promise((r) => setTimeout(r, retryDelayMs))
+          }
         }
-
-        if (!softNoticeShown && attempts >= 4) {
-          softNoticeShown = true
-          toast.message('Still confirming onchain. You can close the app — credit will be added automatically.')
-        }
-
-        if (attempts >= maxVisibleAttempts) return
-
-        await new Promise((r) => setTimeout(r, pollMs))
       }
+      // Exhausted retries — tx taking very long, notify user
+      toast.message('Still confirming. You can close the app — credit will be added automatically.')
     } finally {
       if (verifyInFlight.current === txHash) {
         verifyInFlight.current = ''

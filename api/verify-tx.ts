@@ -22,106 +22,16 @@ function isAddress(x: string) {
   return /^0x[a-fA-F0-9]{40}$/.test(x)
 }
 
-// ─── BaseScan approach (fast, ~1-2s) ─────────────────────────────────────────
-//
-// Fetches the last 5 transactions from the user's address to the credit contract.
-// If the submitted txHash is among them and status=1, we're done.
-// No polling needed — BaseScan indexes Base txns within ~1-2s of confirmation.
-
-async function checkViaBasceScan(userAddress: string, txHash: string): Promise<'confirmed' | 'not_found' | 'failed'> {
-  const apiKey = process.env.BASESCAN_API_KEY || ''
-  const keyParam = apiKey ? `&apikey=${encodeURIComponent(apiKey)}` : ''
-
-  // Query recent normal txns from userAddress to the credit contract
-  const url =
-    `https://api.basescan.org/api` +
-    `?module=account` +
-    `&action=txlist` +
-    `&address=${encodeURIComponent(userAddress.toLowerCase())}` +
-    `&startblock=0` +
-    `&endblock=99999999` +
-    `&page=1` +
-    `&offset=10` +
-    `&sort=desc` +
-    keyParam
-
-  const controller = new AbortController()
-  const t = setTimeout(() => controller.abort(), 5000)
-  try {
-    const r = await fetch(url, {
-      headers: { Accept: 'application/json' },
-      signal: controller.signal,
-    })
-    if (!r.ok) return 'not_found'
-
-    const data: any = await r.json().catch(() => null)
-    if (!data || data.status === '0') return 'not_found'
-
-    const txns: any[] = Array.isArray(data.result) ? data.result : []
-
-    for (const tx of txns) {
-      const hash = String(tx.hash || '').toLowerCase()
-      if (hash !== txHash.toLowerCase()) continue
-
-      // Found the txHash — check it went to (or involves) the credit contract
-      const toAddr = String(tx.to || '').toLowerCase()
-      const isSuccess = String(tx.isError || '0') === '0' && String(tx.txreceipt_status || '1') !== '0'
-
-      if (!isSuccess) return 'failed'
-
-      // Direct call to credit contract
-      if (toAddr === CREDIT_CONTRACT) return 'confirmed'
-
-      // Smart wallet / batch tx — the tx.to is a proxy, but it may have called
-      // the credit contract internally. Fall through to RPC check for this case.
-      return 'not_found'
-    }
-
-    // Also check internal transactions (smart wallet batched calls)
-    const internalUrl =
-      `https://api.basescan.org/api` +
-      `?module=account` +
-      `&action=txlistinternal` +
-      `&txhash=${encodeURIComponent(txHash)}` +
-      keyParam
-
-    const ctrl2 = new AbortController()
-    const t2 = setTimeout(() => ctrl2.abort(), 4000)
-    try {
-      const r2 = await fetch(internalUrl, {
-        headers: { Accept: 'application/json' },
-        signal: ctrl2.signal,
-      })
-      if (!r2.ok) return 'not_found'
-      const data2: any = await r2.json().catch(() => null)
-      const itxns: any[] = Array.isArray(data2?.result) ? data2.result : []
-      for (const itx of itxns) {
-        const toAddr2 = String(itx.to || '').toLowerCase()
-        if (toAddr2 === CREDIT_CONTRACT) {
-          const isErr = String(itx.isError || '0') !== '0'
-          return isErr ? 'failed' : 'confirmed'
-        }
-      }
-    } finally {
-      clearTimeout(t2)
-    }
-
-    return 'not_found'
-  } finally {
-    clearTimeout(t)
-  }
-}
-
-// ─── RPC fallback ─────────────────────────────────────────────────────────────
+// ─── RPC ──────────────────────────────────────────────────────────────────────
 
 function rpcUrl() {
   const raw = String(process.env.BASE_RPC_URL || process.env.RPC_URL || 'https://mainnet.base.org').trim()
   return raw || 'https://mainnet.base.org'
 }
 
-async function rpcCall(method: string, params: any[]) {
+async function rpcCall(method: string, params: any[], timeoutMs = 5000) {
   const controller = new AbortController()
-  const t = setTimeout(() => controller.abort(), 6000)
+  const t = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const r = await fetch(rpcUrl(), {
       method: 'POST',
@@ -130,35 +40,74 @@ async function rpcCall(method: string, params: any[]) {
       signal: controller.signal,
     })
     const data: any = await r.json().catch(() => ({}))
-    if (!r.ok) throw new Error(data?.error?.message || `RPC error (${r.status})`)
     if (data?.error) throw new Error(data.error.message || 'RPC error')
-    return data?.result
+    return data?.result ?? null
   } finally {
     clearTimeout(t)
   }
 }
 
 function touchesCreditContract(receipt: any): boolean {
-  const toAddr = String(receipt?.to || '').toLowerCase()
-  if (toAddr === CREDIT_CONTRACT) return true
+  if (String(receipt?.to || '').toLowerCase() === CREDIT_CONTRACT) return true
   const logs: any[] = Array.isArray(receipt?.logs) ? receipt.logs : []
-  for (const log of logs) {
-    if (String(log?.address || '').toLowerCase() === CREDIT_CONTRACT) return true
-  }
-  return false
+  return logs.some((log) => String(log?.address || '').toLowerCase() === CREDIT_CONTRACT)
 }
 
-async function waitForReceiptRpc(txHash: string, timeoutMs = 7000, pollMs = 700): Promise<any> {
+/**
+ * Polls RPC for receipt until found or timeout.
+ * Runs entirely server-side — frontend makes ONE request and waits.
+ * Base confirms in ~1-2s with Alchemy, so 15s is more than enough.
+ */
+async function waitForReceiptRpc(txHash: string, timeoutMs = 15000, pollMs = 500) {
   const started = Date.now()
   while (Date.now() - started < timeoutMs) {
-    const receipt = await rpcCall('eth_getTransactionReceipt', [txHash])
-    if (receipt) return receipt
+    try {
+      const receipt = await rpcCall('eth_getTransactionReceipt', [txHash], 4000)
+      if (receipt) return receipt
+    } catch {
+      // RPC error on this attempt — keep trying
+    }
     await new Promise((r) => setTimeout(r, pollMs))
   }
   return null
 }
 
-// ─── Main handler ─────────────────────────────────────────────────────────────
+// ─── BaseScan (secondary fast-path for already-confirmed txns) ────────────────
+
+async function checkBaseScan(userAddress: string, txHash: string): Promise<'confirmed' | 'failed' | 'not_found'> {
+  const apiKey = process.env.BASESCAN_API_KEY || ''
+  const keyParam = apiKey ? `&apikey=${encodeURIComponent(apiKey)}` : ''
+
+  const controller = new AbortController()
+  const t = setTimeout(() => controller.abort(), 4000)
+  try {
+    const url =
+      `https://api.basescan.org/api?module=account&action=txlist` +
+      `&address=${encodeURIComponent(userAddress.toLowerCase())}` +
+      `&page=1&offset=10&sort=desc${keyParam}`
+
+    const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal })
+    if (!r.ok) return 'not_found'
+
+    const data: any = await r.json().catch(() => null)
+    if (!data || data.status === '0') return 'not_found'
+
+    const txns: any[] = Array.isArray(data.result) ? data.result : []
+    for (const tx of txns) {
+      if (String(tx.hash || '').toLowerCase() !== txHash.toLowerCase()) continue
+      const success = String(tx.isError || '0') === '0' && String(tx.txreceipt_status || '1') !== '0'
+      if (!success) return 'failed'
+      if (String(tx.to || '').toLowerCase() === CREDIT_CONTRACT) return 'confirmed'
+      // Smart wallet — need RPC to check logs
+      return 'not_found'
+    }
+    return 'not_found'
+  } finally {
+    clearTimeout(t)
+  }
+}
+
+// ─── Handler ──────────────────────────────────────────────────────────────────
 
 export default async function handler(req: any, res: any) {
   setCors(req, res)
@@ -178,49 +127,43 @@ export default async function handler(req: any, res: any) {
   const txHash = String(body?.txHash || '').trim()
   if (!isTxHash(txHash)) return json(res, 400, { error: 'Invalid transaction hash' })
 
-  // Extract user address from body (needed for BaseScan lookup)
   const userAddress = String(body?.address || '').trim()
 
   try {
     const current = await getOrCreateUser(userId)
 
-    // Already credited — fast path
-    const alreadyCounted = await txAlreadyCounted(txHash)
-    if (alreadyCounted) {
+    if (await txAlreadyCounted(txHash)) {
       return json(res, 200, { ok: true, alreadyCounted: true, credits: current.credits, txHash })
     }
 
-    // ── Strategy 1: BaseScan address lookup (fast, ~1-2s after confirmation) ──
+    // ── Fast path: BaseScan lookup (works if tx already indexed, ~0-2s lag) ──
     if (isAddress(userAddress)) {
       try {
-        const scanResult = await checkViaBasceScan(userAddress, txHash)
-
+        const scanResult = await checkBaseScan(userAddress, txHash)
         if (scanResult === 'confirmed') {
           await markTxCounted(txHash)
           await incrementMetric(userId, 'txCount', 1, 1)
           const updated = await adjustCredits(userId, +1)
           return json(res, 200, { ok: true, credits: updated.credits, txHash, method: 'basescan' })
         }
-
         if (scanResult === 'failed') {
           return json(res, 400, { error: 'Transaction failed onchain', txHash, credits: current.credits })
         }
-
-        // 'not_found' — tx not yet indexed or is a smart wallet batch, fall through to RPC
-      } catch {
-        // BaseScan failed (rate limit, network) — fall through to RPC
-      }
+      } catch { /* BaseScan unavailable — fall through */ }
     }
 
-    // ── Strategy 2: RPC receipt polling (fallback) ────────────────────────────
-    const receipt: any = await waitForReceiptRpc(txHash)
+    // ── Main path: RPC polling (server loops until confirmed, max 15s) ────────
+    // Frontend makes ONE request and waits here. No frontend polling loop needed.
+    const receipt = await waitForReceiptRpc(txHash)
 
     if (!receipt) {
+      // Still not confirmed after 15s — rare on Base with Alchemy
+      // Return pending so frontend can retry once more
       return json(res, 202, { ok: true, pending: true, credits: current.credits, txHash })
     }
 
-    const statusHex = String(receipt?.status || '')
-    if (statusHex === '0x0' || statusHex === '0') {
+    const status = String(receipt?.status || '')
+    if (status === '0x0' || status === '0') {
       return json(res, 400, { error: 'Transaction failed onchain', txHash, credits: current.credits })
     }
 
