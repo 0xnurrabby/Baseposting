@@ -64,15 +64,88 @@ type StyleDeck = {
 }
 
 const STYLE_DECK: StyleDeck[] = [
-  { id: 'one-liner', label: 'Dry humor one-liner', formatGuide: '1–2 lines. No bullets. No intro paragraph. Punchline is the last line.', anglePrompts: ['small irony', 'deadpan observation', 'subtle flex, but humble'], weight: 1.0, maxTokens: 90, maxChars: 220 },
-  { id: 'micro-story', label: 'Tiny story', formatGuide: '3–5 short lines. Story beats. Line breaks matter. End with a calm takeaway.', anglePrompts: ['moment from today', 'builder frustration -> aha', 'small win onchain'], weight: 1.0, maxTokens: 150, maxChars: 360 },
-  { id: 'checklist', label: 'Checklist', formatGuide: 'Use 3–5 lines like "-" or "- [ ]". No long paragraphs.', anglePrompts: ['shipping checklist', 'onboarding checklist', 'smart habits'], weight: 0.85, maxTokens: 170, maxChars: 420 },
-  { id: 'contrast', label: 'Then vs now', formatGuide: 'Use “Then →” / “Now →” (or similar) 2–4 lines. Very readable. No fluff.', anglePrompts: ['fees', 'ux', 'dev velocity', 'onchain social'], weight: 0.9, maxTokens: 150, maxChars: 360 },
-  { id: 'based-notes', label: 'Based notes (rare)', formatGuide: 'Use 2–4 lines like “Jesse🟦: …” “Aneri🟦: …”. Keep it short. No long paragraphs.', anglePrompts: ['two quick observations', 'two lessons', 'two small wins'], weight: 0.25, maxTokens: 160, maxChars: 420 },
-  { id: 'question-hook', label: 'Question hook', formatGuide: 'Start with 1 question. Then 2–4 lines. End with a simple call for replies.', anglePrompts: ['favorite Base app category', 'builder tip request', 'what are you watching'], weight: 0.75, maxTokens: 160, maxChars: 420 },
+  {
+    id: 'one-liner',
+    label: 'Dry one-liner or two-liner',
+    formatGuide: '1–2 lines max. No bullets, no intro. Reads like a passing thought you actually had. The last line lands on its own.',
+    anglePrompts: [
+      'something that felt weird until it just worked',
+      'a small thing you noticed that others probably missed',
+      'irony about how people talk about crypto vs what actually happens',
+      'something you used to think was complicated that turned out not to be',
+      'a quiet observation about how onchain activity has changed your actual routine',
+    ],
+    weight: 1.2,
+    maxTokens: 80,
+    maxChars: 200,
+  },
+  {
+    id: 'micro-story',
+    label: 'Personal micro-story',
+    formatGuide: '3–5 very short lines. Write like a real person recounting a specific small moment. No summaries. No "takeaway:" labels. The ending is understated, not motivational.',
+    anglePrompts: [
+      'the moment you realized gas fees actually stopped mattering to you',
+      'trying something on Base for the first time and it just working',
+      'the difference between explaining crypto to someone last year vs now',
+      'something broke, you figured it out, moved on — no drama',
+      'a late-night rabbit hole into a Base app that surprised you',
+    ],
+    weight: 1.1,
+    maxTokens: 160,
+    maxChars: 380,
+  },
+  {
+    id: 'contrast',
+    label: 'Before vs after (personal)',
+    formatGuide: 'Use 2–3 short line pairs. Format like: "Before: ..." then "Now: ..." — or "Used to: ..." then "These days: ...". No bullets. Punchy. Reads like personal experience, not a marketing comparison.',
+    anglePrompts: [
+      'how you thought about L2s before vs after using Base regularly',
+      'deploying contracts: what it felt like then vs what it feels like now',
+      'checking gas before every transaction vs not thinking about it anymore',
+      'what "onchain social" meant to you a year ago vs today',
+    ],
+    weight: 0.95,
+    maxTokens: 140,
+    maxChars: 340,
+  },
+  {
+    id: 'raw-take',
+    label: 'Raw honest take',
+    formatGuide: '2–4 lines. No hedging. Sounds like something you would say to a friend who is also deep in crypto. Not a hot take for engagement — just a real opinion you actually hold.',
+    anglePrompts: [
+      'why most L2 comparisons miss what actually matters day to day',
+      'what Base got right that others overthought',
+      'something the Base ecosystem does quietly well that nobody talks about',
+      'a misconception about Base that you yourself used to have',
+      'why you stopped caring about a specific crypto debate',
+    ],
+    weight: 1.0,
+    maxTokens: 150,
+    maxChars: 360,
+  },
+  {
+    id: 'curious-question',
+    label: 'Genuine curious question',
+    formatGuide: '1 real question you actually have + 1–2 lines of your own thinking on it. NOT engagement bait. You are genuinely curious, not running a poll. Sounds like something you would post on Farcaster at midnight.',
+    anglePrompts: [
+      'something about builder behavior on Base you have been wondering about',
+      'a UX pattern on Base apps that surprised you and you want to understand why',
+      'something about how people actually use DeFi on Base day to day',
+      'what makes some Base apps get real traction when others with similar ideas never do',
+    ],
+    weight: 0.8,
+    maxTokens: 150,
+    maxChars: 360,
+  },
 ]
 
-const SL0P_PHRASES = ['unlock', 'game changer', 'revolutionize', 'next level', 'the future is here', 'join us', "don't sleep on", 'wagmi']
+const SLOP_PHRASES = [
+  'unlock', 'game changer', 'revolutionize', 'next level', 'the future is here',
+  'join us', "don't sleep on", 'wagmi', 'buidl', 'this is huge', 'massive',
+  'exciting', 'thrilled', 'delighted', 'proud to announce', 'breaking',
+  'alpha', 'gem', 'ser', 'fren', 'lfg', 'to the moon', 'diamond hands',
+  'every percentage saved', 'breaking the bank', 'work wonders', 'nails both', 'secret sauce',
+]
 
 const TOPIC_TAGS: Array<{ tag: string; keywords: string[] }> = [
   { tag: 'onchain-social', keywords: ['farcaster', 'warpcast', 'cast', 'frames', 'mini app', 'miniapp', 'social'] },
@@ -85,7 +158,12 @@ const TOPIC_TAGS: Array<{ tag: string; keywords: string[] }> = [
   { tag: 'onboarding', keywords: ['onboard', 'new', 'beginner', 'first', 'wallet', 'bridge', 'learn'] },
 ]
 
-const BANNED_OPENERS = ['gm', 'hot take', 'unpopular opinion', "here's the thing", "let's talk about", 'thread']
+const BANNED_OPENERS = [
+  'gm', 'hot take', 'unpopular opinion', "here's the thing",
+  "let's talk about", 'thread', 'just a reminder', 'reminder:',
+  'fact:', 'truth:', 'real talk', 'i want to talk about',
+  'why do i love', 'let me know what you',
+]
 
 // Apify cache — 15 min TTL + pre-warm at module load
 const APIFY_CACHE_TTL_MS = 1000 * 60 * 15
@@ -209,10 +287,11 @@ function postProcessOutput(raw: string) {
 function ensureBaseMention(text: string): string {
   if (/\bbase\b/i.test(text)) return text
   const suffixes = [
-    '\n\nFeels good on Base.',
-    '\n\nThis is why Base clicks for me.',
-    '\n\nBase just makes this easy.',
-    '\n\nAll on Base 💙',
+    '\n\nHappened on Base, for context.',
+    '\n\nAll of this is on Base.',
+    '\n\nThis is what Base feels like day to day.',
+    '\n\nBase, specifically.',
+    '\n\nContext: I was on Base.',
   ]
   return text.trimEnd() + suffixes[Math.floor(Math.random() * suffixes.length)]
 }
@@ -220,20 +299,29 @@ function ensureBaseMention(text: string): string {
 function fastLocalGenerate(args: { posts: Array<{ author: string; text: string }>; style: StyleDeck }): string {
   const corpus = args.posts.map((p) => p.text).join(' ').toLowerCase()
   const has = (words: string[]) => words.some((w) => corpus.includes(w))
-  let cue = 'shipping without overthinking every step'
-  if (has(['fee', 'fees', 'gas', 'cheap'])) cue = 'low fees'
-  else if (has(['fast', 'faster', 'latency', 'finality'])) cue = 'fast feedback loops'
-  else if (has(['ship', 'builder', 'build'])) cue = 'shipping small things quickly'
-  else if (has(['farcaster', 'cast', 'social'])) cue = 'onchain posts that feel native'
-  else if (has(['wallet', 'onboard'])) cue = 'getting people onchain without drama'
-  else if (has(['defi', 'swap', 'liquidity'])) cue = 'moving capital without extra friction'
 
-  const lines = [
-    `What actually works on Base: ${cue}.`,
-    'The small experiments finally feel worth doing.',
-    'Nothing fancy, just less friction 💙',
+  const fallbacks = [
+    "Been using Base almost daily now. The part that actually changed my workflow isn't what I expected.",
+    'Deployed something on Base yesterday. Took maybe ten minutes from idea to live. That used to mean something different.',
+    "The quiet thing about Base is that it stops being a topic of conversation the moment it just works.",
+    "Still find it slightly funny that the chain I thought I'd try once has become the one I actually use.",
+    "You stop thinking about fees at some point. That's when it starts feeling like infrastructure.",
+    "Something clicked about onchain apps this week that I didn't expect to click.",
   ]
-  return clampChars(lines.join('\n'), args.style.maxChars)
+
+  let pick = fallbacks[Math.floor(Math.random() * fallbacks.length)]
+
+  if (has(['fee', 'fees', 'gas', 'cheap'])) {
+    pick = "The moment you stop mentally converting gas to USD before every transaction is the moment it stops feeling like crypto and starts feeling like a tool."
+  } else if (has(['ship', 'builder', 'build', 'deploy'])) {
+    pick = "Shipped something on Base this week that I kept putting off because I expected it to be annoying. It wasn't."
+  } else if (has(['farcaster', 'cast', 'social', 'frames'])) {
+    pick = "Onchain social still feels weird to explain to people outside it. From inside it, it already feels normal."
+  } else if (has(['defi', 'swap', 'liquidity', 'yield'])) {
+    pick = "The DeFi stuff on Base is genuinely usable now. That's a sentence I didn't think I'd be saying without caveats."
+  }
+
+  return clampChars(pick, args.style.maxChars)
 }
 
 async function openaiChatWithTimeout(body: any, apiKey: string, timeoutMs: number) {
@@ -275,45 +363,66 @@ async function openaiGenerate(args: {
     .join('\n')
 
   const system = [
-    'You are writing a single Farcaster/Twitter-style post for the Base ecosystem.',
-    'It must feel human-written: specific, a little clever, and NOT like an AI template.',
-    'Hard rules:',
-    '- The post MUST mention "Base" naturally once (not more than twice).',
-    '- Do NOT copy any source post. Do NOT paraphrase too closely.',
-    '- Do NOT use long dashes (—/–). Use "..." for pauses.',
-    '- Do NOT use generic hype/marketing lines. Avoid obvious AI phrasing.',
-    `- Avoid these slop phrases: ${SL0P_PHRASES.join(', ')}.`,
-    '- No fake announcements, token launch rumors, made-up metrics, or "insider alpha". Stay truthful and general when unsure.',
-    '- Keep emoji use minimal (0–2). Avoid aesthetic/creator/thread emojis (🎨🧵🖌️🖼️✨🪄🌙💫📌📝).',
-    '- Output ONLY the post text (no quotes, no labels).',
+    'You are a real person who is deep in the Base ecosystem — a builder, user, or active community member.',
+    'You are writing one post for Twitter/X (or Farcaster). This post will appear on your personal timeline.',
     '',
-    'Base grounding (safe):',
+    'Your voice: direct, occasionally dry, genuinely curious, sometimes a little tired of hype.',
+    'You have actually used Base. You notice small things. You do not write like a marketer.',
+    '',
+    '=== WHAT MAKES A POST FEEL REAL ===',
+    '- It comes from a specific observation or moment, not a general statement.',
+    '- It does not try to teach anyone. It just says what you noticed or thought.',
+    '- It sounds like something you would say in a group chat, not a newsletter.',
+    '- It uses normal words. No jargon unless it is specific and intentional.',
+    '- It does not wrap up neatly with a lesson or a call to action.',
+    '',
+    '=== WHAT KILLS AUTHENTICITY — NEVER DO ANY OF THESE ===',
+    '- Starting with "Why do I love Base?" or any self-promotional opener.',
+    '- Checklist format with "- [ ]" items. Nobody on Twitter posts this.',
+    '- Fake dialogue between invented characters (e.g. "Jesse🟦: ... Mika🟦: ..."). This format is dead.',
+    '- Generic engagement bait: "What\'s your favorite app on Base?" "Let me know what you think!"',
+    `- These phrases: ${SLOP_PHRASES.slice(0, 14).join(', ')}.`,
+    '- Ending with a motivational line, a lesson learned, or a call to action.',
+    '- Using 🚀 💡 🎯 ✅ 🔥 ⚡ 🏆 💪 emojis. These immediately signal AI output.',
+    '- Vague claims that could apply to any blockchain: "low fees and fast transactions."',
+    '- Writing about Base like it is a product you are selling to someone.',
+    '- Long dashes (— or –). Use "..." if you need a pause.',
+    '',
+    '=== HARD RULES ===',
+    '- Mention "Base" once, naturally. Maximum twice only if it fits.',
+    '- Do NOT copy or closely paraphrase any source post.',
+    '- Do NOT invent metrics, announcements, partnerships, or insider information.',
+    '- Keep emoji use to 0 or 1 max. Only if it genuinely fits.',
+    '- Output ONLY the post text. No quotes, no labels, no preamble.',
+    '',
+    'What you know about Base (stay within this; do not invent facts):',
     ...BASE_FACTS.map((x) => `- ${x}`),
   ].join('\n')
 
   const user = [
-    `Variety seed: ${seed}`,
-    `Chosen format: ${style.label} (${style.id})`,
-    `Formatting constraints: ${style.formatGuide}`,
-    `Angle: ${angle}`,
-    `Topic focus: ${args.topicTag}`,
-    `Banned opening phrases: ${BANNED_OPENERS.join(', ')}`,
+    `[Variety seed: ${seed}]`,
     '',
-    'Recent posts for this user (avoid repeating):',
-    args.recentTexts.length ? args.recentTexts.map((t, i) => `${i + 1}. ${t}`).join('\n') : '(none)',
+    `Format: ${style.label}`,
+    `Formatting rules: ${style.formatGuide}`,
+    `Angle for this post: ${angle}`,
+    `Topic area: ${args.topicTag}`,
     '',
-    'Source posts from the Apify dataset (inspiration only; do NOT copy):',
-    sourceBlock || '(none)',
+    `Do NOT open the post with: ${BANNED_OPENERS.join(', ')}`,
     '',
-    'Extra user context (optional):',
-    args.extraPrompt?.trim() ? args.extraPrompt.trim() : '(none)',
+    args.recentTexts.length
+      ? `Recent posts by this user (avoid repeating the same angle or phrasing):\n${args.recentTexts.map((t, i) => `${i + 1}. ${t}`).join('\n')}`
+      : '',
     '',
-    'Write ONE post now. Requirements:',
-    '- It should feel like a real person wrote it.',
-    '- It must be clearly about Base by the end, but NOT forced.',
-    '- Use the chosen format. If you use bullets/quotes, keep each line short.',
-    '- Avoid long paragraphs.',
-  ].join('\n')
+    sourceBlock
+      ? `Real posts from the Base community right now (raw signal for what people are thinking — do NOT copy or paraphrase directly):\n${sourceBlock}`
+      : '',
+    '',
+    args.extraPrompt?.trim()
+      ? `User context (incorporate if relevant, ignore if it doesn't fit naturally):\n${args.extraPrompt.trim()}`
+      : '',
+    '',
+    'Write the post now. One post only. Make it feel like you actually lived it or thought it — not like you were asked to write about Base.',
+  ].filter(Boolean).join('\n')
 
   const body = {
     model,
@@ -321,15 +430,15 @@ async function openaiGenerate(args: {
       { role: 'system', content: system },
       { role: 'user', content: user },
     ],
-    temperature: 1.15,
-    presence_penalty: 0.7,
-    frequency_penalty: 0.35,
+    temperature: 1.2,
+    presence_penalty: 0.9,
+    frequency_penalty: 0.5,
     max_tokens: style.maxTokens,
   }
 
   let resp: Response
   try {
-    // 15s timeout — if OpenAI slower than that, fall back to local
+    // 15s timeout — if OpenAI is slower than that, fall back to local
     resp = await openaiChatWithTimeout(body, apiKey, 15000)
   } catch {
     return fastLocalGenerate(args)
@@ -343,13 +452,34 @@ async function openaiGenerate(args: {
 
   let cleaned = clampChars(postProcessOutput(out), style.maxChars)
 
-  // Handle banned openers
+  // Strip banned openers
   const lower = cleaned.toLowerCase().trim()
   for (const opener of BANNED_OPENERS) {
-    if (lower.startsWith(opener)) {
-      cleaned = postProcessOutput(`Noticed something: ${cleaned}`)
+    if (lower.startsWith(opener.toLowerCase())) {
+      const after = cleaned.slice(opener.length).replace(/^[\s:,.-]+/, '')
+      if (after.length > 30) cleaned = postProcessOutput(after)
       break
     }
+  }
+
+  // Strip checklist format (- [ ] pattern) — collapse to prose
+  if (/^[-*]\s*\[[ x]\]/m.test(cleaned)) {
+    cleaned = cleaned
+      .split('\n')
+      .map((l) => l.replace(/^[-*]\s*\[[ x]\]\s*/, '').trim())
+      .filter(Boolean)
+      .join(' ')
+    cleaned = clampChars(postProcessOutput(cleaned), style.maxChars)
+  }
+
+  // Strip fake-character dialogue (e.g. "Name🟦: ...")
+  if (/\w+[\s\S]{0,4}🟦\s*:/.test(cleaned)) {
+    cleaned = cleaned
+      .split('\n')
+      .map((l) => l.replace(/^\w[\w\s]{0,20}🟦\s*:\s*/, '').trim())
+      .filter(Boolean)
+      .join('\n')
+    cleaned = clampChars(postProcessOutput(cleaned), style.maxChars)
   }
 
   return cleaned
