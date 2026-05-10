@@ -5,6 +5,9 @@ import { adjustCredits, getOrCreateUser, incrementMetric, getRecent, pushRecent 
 import { logCreditSpend } from './_lib/leaderboard.js'
 import { handleOptions, json, readJson, requirePost, setCors } from './_lib/http.js'
 import { getBaseMetrics, metricsToPromptLine } from './_lib/base-metrics.js'
+import { getBaseSearchContext } from './_lib/gemini-search.js'
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 function toUserId(body: any) {
   const fid = body?.fid
@@ -47,21 +50,76 @@ function normalizePosts(items: any[], max: number) {
   return out
 }
 
-// These are the only facts about Base the model is allowed to use.
-// Do NOT add speculative or exaggerated claims here.
+function clampChars(s: string, max: number) {
+  const txt = String(s || '').trim()
+  if (txt.length <= max) return txt
+  const cut = txt.slice(0, max)
+  const lastBreak = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('\n'), cut.lastIndexOf('! '), cut.lastIndexOf('? '))
+  if (lastBreak > max * 0.6) return cut.slice(0, lastBreak + 1).trim()
+  return cut.trim()
+}
+
+function postProcessOutput(raw: string) {
+  let out = String(raw || '').trim()
+  if (!out) return out
+  out = out.replace(/^"(.*)"$/s, '$1').replace(/^'(.*)'$/s, '$1').trim()
+  out = out.replace(/—/g, '...').replace(/–/g, '...').replace(/\u2026/g, '...')
+  out = out.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+  return out
+}
+
+function ensureBaseMention(text: string): string {
+  if (/\bbase\b/i.test(text)) return text
+  const suffixes = [
+    '\n\nHappened on Base, for context.',
+    '\n\nAll of this is on Base.',
+    '\n\nThis is what Base feels like day to day.',
+    '\n\nBase, specifically.',
+    '\n\nContext: I was on Base.',
+  ]
+  return text.trimEnd() + suffixes[Math.floor(Math.random() * suffixes.length)]
+}
+
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+// Ground truth facts the model is allowed to use.
+// Never add speculative or exaggerated claims here.
 const BASE_STATIC_FACTS = [
   'Base is an Ethereum Layer 2 (L2) built on the OP Stack, incubated by Coinbase.',
   'Base launched to mainnet in August 2023.',
-  'Base uses Ethereum for security (posts transaction data to Ethereum as calldata).',
-  'Gas fees on Base are fractions of a cent for most transactions — not just "low", literally sub-cent.',
-  'Base is EVM-compatible: any Ethereum smart contract can deploy on Base without code changes.',
+  'Base uses Ethereum for security — it posts transaction data to Ethereum.',
+  'Gas fees on Base are literally fractions of a cent for most transactions.',
+  'Base is EVM-compatible: Ethereum smart contracts deploy on Base without changes.',
   'Base does not have its own native token.',
-  'The Base ecosystem includes DeFi apps, NFTs, onchain social (Farcaster/Warpcast), and mini apps.',
-  'Do NOT invent specific TVL numbers, user counts, transaction counts, or partnerships unless provided below as live data.',
-  'Do NOT say Base was "just another tech gimmick" or that it had high fees — it launched with low fees from day one.',
-  'Do NOT compare gas fees to coffee prices or other everyday items — the actual fee is a fraction of a cent, which makes such comparisons awkward and inaccurate.',
-  'Do NOT claim Base "nails" anything or use sales-pitch language.',
+  'The Base ecosystem includes DeFi, NFTs, onchain social (Farcaster/Warpcast), and mini apps.',
 ]
+
+const BASE_FORBIDDEN_CLAIMS = [
+  'Do NOT say Base was "just another tech gimmick" — it was not.',
+  'Do NOT say Base "had high fees" — it launched with low fees.',
+  'Do NOT compare gas fees to coffee, groceries, or other everyday prices.',
+  'Do NOT invent specific TVL, DAU, or transaction numbers unless given as live data below.',
+  'Do NOT invent partnerships, token launches, or protocol announcements.',
+  'Do NOT write about Base like you are selling it.',
+]
+
+const SLOP_PHRASES = [
+  'unlock', 'game changer', 'revolutionize', 'next level', 'the future is here',
+  'join us', "don't sleep on", 'wagmi', 'buidl', 'this is huge',
+  'exciting', 'thrilled', 'delighted', 'proud to announce',
+  'gem', 'lfg', 'to the moon', 'diamond hands',
+  'work wonders', 'nails both', 'secret sauce', 'makes this easy',
+  'less than my morning coffee', 'every percentage saved',
+]
+
+const BANNED_OPENERS = [
+  'gm', 'hot take', 'unpopular opinion', "here's the thing",
+  "let's talk about", 'thread', 'just a reminder', 'reminder:',
+  'fact:', 'truth:', 'real talk', 'i want to talk about',
+  'why do i love', "let me know what you", 'have you ever',
+]
+
+// ─── Style deck ───────────────────────────────────────────────────────────────
 
 type StyleDeck = {
   id: string
@@ -77,7 +135,7 @@ const STYLE_DECK: StyleDeck[] = [
   {
     id: 'one-liner',
     label: 'Dry one-liner or two-liner',
-    formatGuide: '1–2 lines max. No bullets, no intro. Reads like a passing thought you actually had. The second line lands on its own.',
+    formatGuide: '1–2 lines max. No bullets. Reads like a passing thought you actually had. The second line should land on its own.',
     anglePrompts: [
       'something that felt weird until it just worked',
       'a small thing you noticed that others probably missed',
@@ -92,12 +150,12 @@ const STYLE_DECK: StyleDeck[] = [
   {
     id: 'micro-story',
     label: 'Personal micro-story',
-    formatGuide: '3–5 very short lines. Write like a real person recounting a specific small moment — not a lesson, not a tutorial. The ending is understated.',
+    formatGuide: '3–5 very short lines. Write like a real person recounting a specific small moment. No lesson, no tutorial. The ending is understated — not motivational.',
     anglePrompts: [
-      'the first time a transaction confirmed so fast you had to double-check it worked',
+      'the first time a transaction confirmed so fast you had to double-check',
       'trying something new on Base and it just working without drama',
       'explaining Base to someone and realizing how much simpler it actually is now',
-      'something broke, you figured it out, moved on — small win',
+      'something broke, you figured it out, moved on',
       'going down a rabbit hole in the Base ecosystem late at night',
     ],
     weight: 1.1,
@@ -107,12 +165,12 @@ const STYLE_DECK: StyleDeck[] = [
   {
     id: 'contrast',
     label: 'Before vs after (personal)',
-    formatGuide: 'Use 2–3 short line pairs: "Before: ..." / "Now: ..." or "Used to: ..." / "These days: ...". No bullets. Personal experience, not a marketing comparison. The "before" must be accurate — Base launched with low fees, so the before cannot be "L2s had high fees".',
+    formatGuide: '2–3 short line pairs: "Before: ..." then "Now: ..." — or "Used to: ..." then "These days: ...". Personal experience only. The "before" must be accurate — Base launched with low fees, so do not write a "before" where L2s had high fees.',
     anglePrompts: [
       'how you thought about deploying contracts before vs how you think about it now',
-      'how you checked gas before every tx vs not thinking about it anymore',
+      'checking gas before every tx vs not thinking about it anymore',
       'what "onchain social" meant to you before Farcaster vs how it feels now',
-      'what your mental model of L2s was before you actually used Base regularly',
+      'your mental model of L2s before vs after using Base every day',
     ],
     weight: 0.95,
     maxTokens: 140,
@@ -121,13 +179,13 @@ const STYLE_DECK: StyleDeck[] = [
   {
     id: 'raw-take',
     label: 'Raw honest take',
-    formatGuide: '2–4 lines. Direct, no hedging. Sounds like something you would say to a friend who is also in crypto. Not a hot take for engagement — an actual opinion.',
+    formatGuide: '2–4 lines. Direct, no hedging. Sounds like something you would say to a friend who is also in crypto. Not a hot take for engagement — an actual opinion you hold.',
     anglePrompts: [
       'why most L2 debates miss what actually matters for daily use',
       'something the Base ecosystem does quietly well that the broader crypto conversation ignores',
       'a misconception about Base you yourself had before using it',
       'why you stopped caring about a specific crypto discourse topic',
-      'what makes Base feel different from the builder side vs just the user side',
+      'what makes Base feel different from the builder side vs the user side',
     ],
     weight: 1.0,
     maxTokens: 150,
@@ -136,11 +194,11 @@ const STYLE_DECK: StyleDeck[] = [
   {
     id: 'curious-question',
     label: 'Genuine curious question',
-    formatGuide: '1 real question you actually have + 1–2 lines of your own thinking on it. NOT engagement bait. NOT "let me know below!" — you are thinking out loud, not running a survey.',
+    formatGuide: '1 real question you actually have + 1–2 lines of your own thinking. NOT engagement bait. NOT "let me know below!" — you are thinking out loud, not running a poll.',
     anglePrompts: [
-      'something about how builders choose Base vs other chains that you have been thinking about',
-      'a UX pattern across Base apps that surprised you and you want to understand',
-      'what the actual daily fee data tells us about how people use Base',
+      'something about how builders choose Base vs other chains',
+      'a UX pattern across Base apps that surprised you and you want to understand why',
+      'what the actual fee and volume data tells you about how people use Base',
       'why some Base apps get real traction when others with similar ideas stay quiet',
     ],
     weight: 0.8,
@@ -149,14 +207,7 @@ const STYLE_DECK: StyleDeck[] = [
   },
 ]
 
-const SLOP_PHRASES = [
-  'unlock', 'game changer', 'revolutionize', 'next level', 'the future is here',
-  'join us', "don't sleep on", 'wagmi', 'buidl', 'this is huge', 'massive',
-  'exciting', 'thrilled', 'delighted', 'proud to announce', 'breaking',
-  'gem', 'ser', 'fren', 'lfg', 'to the moon', 'diamond hands',
-  'every percentage saved', 'breaking the bank', 'work wonders', 'nails both',
-  'secret sauce', 'less than my morning coffee', 'makes this easy',
-]
+// ─── Topic tags ───────────────────────────────────────────────────────────────
 
 const TOPIC_TAGS: Array<{ tag: string; keywords: string[] }> = [
   { tag: 'onchain-social', keywords: ['farcaster', 'warpcast', 'cast', 'frames', 'mini app', 'miniapp', 'social'] },
@@ -169,14 +220,8 @@ const TOPIC_TAGS: Array<{ tag: string; keywords: string[] }> = [
   { tag: 'onboarding', keywords: ['onboard', 'new', 'beginner', 'first', 'wallet', 'bridge', 'learn'] },
 ]
 
-const BANNED_OPENERS = [
-  'gm', 'hot take', 'unpopular opinion', "here's the thing",
-  "let's talk about", 'thread', 'just a reminder', 'reminder:',
-  'fact:', 'truth:', 'real talk', 'i want to talk about',
-  'why do i love', "let me know what you", 'have you ever',
-]
+// ─── Apify ────────────────────────────────────────────────────────────────────
 
-// Apify cache — 15 min TTL + pre-warm at module load
 const APIFY_CACHE_TTL_MS = 1000 * 60 * 15
 let apifyCache: { ts: number; items: any[] } | null = null
 let apifyPrewarmPromise: Promise<any[]> | null = null
@@ -220,13 +265,14 @@ async function fetchApifyPosts(limit: number): Promise<any[]> {
   }
 }
 
-// Pre-warm at module load
 try {
   apifyPrewarmPromise = fetchApifyPostsInner(60).then((arr) => {
     apifyCache = { ts: Date.now(), items: arr }
     return arr
   }).catch(() => [])
 } catch { /* ignore */ }
+
+// ─── Style / topic picking ────────────────────────────────────────────────────
 
 function weightedPick<T extends { weight: number }>(items: T[], penalize: Set<string>, idKey: (x: T) => string): T {
   const weights = items.map((s) => (penalize.has(idKey(s)) ? s.weight * 0.2 : s.weight))
@@ -277,35 +323,7 @@ function pickSourcePosts(posts: Array<{ author: string; text: string }>, topicTa
   return picked
 }
 
-function clampChars(s: string, max: number) {
-  const txt = String(s || '').trim()
-  if (txt.length <= max) return txt
-  const cut = txt.slice(0, max)
-  const lastBreak = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('\n'), cut.lastIndexOf('! '), cut.lastIndexOf('? '))
-  if (lastBreak > max * 0.6) return cut.slice(0, lastBreak + 1).trim()
-  return cut.trim()
-}
-
-function postProcessOutput(raw: string) {
-  let out = String(raw || '').trim()
-  if (!out) return out
-  out = out.replace(/^"(.*)"$/s, '$1').replace(/^'(.*)'$/s, '$1').trim()
-  out = out.replace(/—/g, '...').replace(/–/g, '...').replace(/\u2026/g, '...')
-  out = out.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
-  return out
-}
-
-function ensureBaseMention(text: string): string {
-  if (/\bbase\b/i.test(text)) return text
-  const suffixes = [
-    '\n\nHappened on Base, for context.',
-    '\n\nAll of this is on Base.',
-    '\n\nThis is what Base feels like day to day.',
-    '\n\nBase, specifically.',
-    '\n\nContext: I was on Base.',
-  ]
-  return text.trimEnd() + suffixes[Math.floor(Math.random() * suffixes.length)]
-}
+// ─── Fallback local generator ─────────────────────────────────────────────────
 
 function fastLocalGenerate(args: { posts: Array<{ author: string; text: string }>; style: StyleDeck }): string {
   const corpus = args.posts.map((p) => p.text).join(' ').toLowerCase()
@@ -335,22 +353,21 @@ function fastLocalGenerate(args: { posts: Array<{ author: string; text: string }
   return clampChars(pick, args.style.maxChars)
 }
 
-async function aiGatewayGenerate(args: {
+// ─── OpenAI post generator ────────────────────────────────────────────────────
+
+async function openaiGenerate(args: {
   posts: Array<{ author: string; text: string }>
   style: StyleDeck
   topicTag: string
   recentTexts: string[]
   extraPrompt: string
   metricsLine: string
+  searchContext: string   // from Gemini web search — may be empty
 }): Promise<string> {
-  const apiKey = process.env.AI_GATEWAY_API_KEY
+  const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) return fastLocalGenerate(args)
 
-  // Model: Gemini 2.5 Flash Lite via Vercel AI Gateway
-  // The model ID format for Vercel AI Gateway is "provider/model-name"
-  const model = process.env.AI_GATEWAY_MODEL || 'google/gemini-2.5-flash-lite-preview-06-17'
-  const baseURL = 'https://ai-gateway.vercel.sh/v1'
-
+  const model = process.env.OPENAI_MODEL || 'gpt-4o-mini'
   const style = args.style
   const angle = style.anglePrompts[Math.floor(Math.random() * style.anglePrompts.length)]
   const seed = crypto.randomUUID()
@@ -360,44 +377,52 @@ async function aiGatewayGenerate(args: {
     .map((p, i) => `${i + 1}. @${p.author}: ${p.text}`)
     .join('\n')
 
+  // ── System prompt ──────────────────────────────────────────────
   const system = [
-    'You are a real person who is deep in the Base ecosystem — a builder or active daily user.',
-    'You are writing one post for Twitter/X (or Farcaster). It will appear on your personal timeline.',
+    'You are a real person deeply embedded in the Base blockchain ecosystem — a builder or active daily user.',
+    'You are writing one post for Twitter/X (or Farcaster) that will appear on your personal timeline.',
     '',
     'Your voice: direct, occasionally dry, genuinely curious. Sometimes a little tired of hype.',
     'You have actually used Base. You notice small, specific things. You do not write like a marketer.',
     '',
     '=== WHAT MAKES A POST FEEL REAL ===',
     '- It comes from a specific observation or moment, not a general statement.',
-    '- It does not try to teach anyone. It just says what you noticed or thought.',
+    '- It does not try to teach anyone. It says what you noticed or thought.',
     '- It sounds like something you would say in a group chat, not a newsletter.',
-    '- It uses normal language. Technical terms only if specific and natural.',
+    '- It uses normal language. Technical terms only when specific and natural.',
     '- It does not wrap up with a lesson, summary, or call to action.',
     '',
     '=== ABSOLUTE PROHIBITIONS ===',
-    '- No fake character dialogue: "Aneri🟦: ..." "Jesse🟦: ..." — this format is dead.',
-    '- No checkbox lists: "- [ ] Do this" — nobody tweets this.',
-    '- No generic engagement bait: "What do you think?" "Let me know below!" "Drop a comment!"',
+    '- No fake character dialogue: "Aneri🟦: ..." "Jesse🟦: ..." — never do this.',
+    '- No checkbox lists: "- [ ] Do this" — nobody posts this on Twitter.',
+    '- No generic engagement bait: "What do you think?" "Let me know below!"',
     '- No self-promotional openers: "Why do I love Base?" "Base is amazing because..."',
-    `- None of these phrases: ${SLOP_PHRASES.slice(0, 16).join(', ')}.`,
-    '- No 🚀 💡 🎯 ✅ 🔥 ⚡ 🏆 💪 emojis. Maximum 1 emoji total, only if genuinely fits.',
-    '- No writing about Base like it is a product you are advertising.',
+    `- None of these phrases: ${SLOP_PHRASES.slice(0, 14).join(', ')}.`,
+    '- No 🚀 💡 🎯 ✅ 🔥 ⚡ 🏆 💪 emojis. Max 1 emoji total, only if it genuinely fits.',
+    '- No writing about Base like you are advertising a product.',
     '- Long dashes (— or –) → use "..." instead.',
     '',
     '=== FACTS YOU ARE ALLOWED TO USE ===',
     ...BASE_STATIC_FACTS.map((f) => `- ${f}`),
     '',
+    '=== WHAT YOU MUST NEVER CLAIM ===',
+    ...BASE_FORBIDDEN_CLAIMS.map((f) => `- ${f}`),
+    '',
     args.metricsLine
-      ? `=== LIVE BASE ONCHAIN DATA (use these numbers if relevant; cite approximately, not precisely) ===\n- ${args.metricsLine}`
+      ? `=== LIVE BASE ONCHAIN DATA (use these numbers approximately if relevant) ===\n- ${args.metricsLine}`
       : '',
     '',
-    '=== HARD RULES ===',
+    args.searchContext
+      ? `=== CURRENT NEWS / CONTEXT FROM WEB SEARCH (verified, use if genuinely relevant) ===\n${args.searchContext}`
+      : '',
+    '',
+    '=== OUTPUT RULES ===',
     '- Mention "Base" at most twice. Once is usually enough.',
     '- Do NOT copy or closely paraphrase source posts.',
-    '- Do NOT invent metrics, partnerships, token launches, or announcements.',
     '- Output ONLY the post text. No quotes, no preamble, no explanation.',
   ].filter(Boolean).join('\n')
 
+  // ── User prompt ────────────────────────────────────────────────
   const user = [
     `[Variety seed: ${seed}]`,
     '',
@@ -406,21 +431,21 @@ async function aiGatewayGenerate(args: {
     `Angle for this post: ${angle}`,
     `Topic area: ${args.topicTag}`,
     '',
-    `Do NOT open with: ${BANNED_OPENERS.join(', ')}`,
+    `Do NOT open with any of: ${BANNED_OPENERS.join(', ')}`,
     '',
     args.recentTexts.length
-      ? `This user recently posted these — avoid repeating the same angle:\n${args.recentTexts.map((t, i) => `${i + 1}. ${t}`).join('\n')}`
+      ? `This user recently posted these — avoid the same angle or phrasing:\n${args.recentTexts.map((t, i) => `${i + 1}. ${t}`).join('\n')}`
       : '',
     '',
     sourceBlock
-      ? `Real posts from the Base community right now (raw signal — do NOT copy or paraphrase):\n${sourceBlock}`
+      ? `Real posts from the Base community right now (raw inspiration — do NOT copy or paraphrase):\n${sourceBlock}`
       : '',
     '',
     args.extraPrompt?.trim()
-      ? `Extra context from the user (use naturally if it fits, ignore if not):\n${args.extraPrompt.trim()}`
+      ? `User context (use naturally if it fits, otherwise ignore):\n${args.extraPrompt.trim()}`
       : '',
     '',
-    'Write the post now. One post only. Make it feel like you actually lived it or thought it.',
+    'Write the post now. One post only. Make it feel like you actually lived it or thought it — not like you were assigned to write about Base.',
   ].filter(Boolean).join('\n')
 
   const body = {
@@ -430,15 +455,17 @@ async function aiGatewayGenerate(args: {
       { role: 'user', content: user },
     ],
     temperature: 1.2,
+    presence_penalty: 0.9,
+    frequency_penalty: 0.5,
     max_tokens: style.maxTokens,
   }
 
   let resp: Response
   try {
     const controller = new AbortController()
-    const t = setTimeout(() => controller.abort(), 18000)
+    const t = setTimeout(() => controller.abort(), 15000)
     try {
-      resp = await fetch(`${baseURL}/chat/completions`, {
+      resp = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -472,7 +499,7 @@ async function aiGatewayGenerate(args: {
     }
   }
 
-  // Strip checklist format (- [ ] pattern)
+  // Strip checklist format (- [ ] pattern) → flatten to prose
   if (/^[-*]\s*\[[ x]\]/m.test(cleaned)) {
     cleaned = cleaned
       .split('\n')
@@ -494,6 +521,8 @@ async function aiGatewayGenerate(args: {
 
   return cleaned
 }
+
+// ─── Handler ──────────────────────────────────────────────────────────────────
 
 export default async function handler(req: any, res: any) {
   setCors(req, res)
@@ -521,7 +550,8 @@ export default async function handler(req: any, res: any) {
 
     let charged = false
     try {
-      // Parallel: Apify posts + Redis recent + Base metrics — all at once
+      // Step 1: Fetch all data sources in parallel
+      // Apify (Twitter scrape) + Redis recent + DeFiLlama metrics
       const [apifyItems, recent, metrics] = await Promise.all([
         fetchApifyPosts(limit),
         getRecent(userId, 'post', 12).catch(() => []),
@@ -547,18 +577,29 @@ export default async function handler(req: any, res: any) {
 
       const metricsLine = metrics ? metricsToPromptLine(metrics) : ''
 
-      let text = await aiGatewayGenerate({
+      // Step 2: Gemini web search — runs concurrently, does not block if fails
+      // ~30% of the time we skip search to save credits and add variety
+      const shouldSearch = Math.random() > 0.3
+      const searchCtx = shouldSearch
+        ? await getBaseSearchContext(usedTopicTag).catch(() => ({ summary: '', skipped: true }))
+        : { summary: '', skipped: true }
+
+      const searchContext = (!searchCtx.skipped && searchCtx.summary) ? searchCtx.summary : ''
+
+      // Step 3: OpenAI generates the final post using all context
+      let text = await openaiGenerate({
         posts: chosenSources,
         style: usedStyle,
         topicTag: usedTopicTag,
         recentTexts,
         extraPrompt,
         metricsLine,
+        searchContext,
       })
 
       text = ensureBaseMention(text)
 
-      // Double-check credits & charge
+      // Step 4: Charge credits
       const latest = await getOrCreateUser(userId)
       if (latest.credits < 3) {
         return json(res, 402, { error: 'Not enough credits (need 3)', credits: latest.credits })
@@ -567,7 +608,7 @@ export default async function handler(req: any, res: any) {
       const after = await adjustCredits(userId, -3)
       charged = true
 
-      // Background tasks — fire and forget
+      // Step 5: Background tasks — fire and forget
       Promise.all([
         pushRecent(userId, 'post', { ts: Date.now(), styleId: usedStyle.id, topicTag: usedTopicTag, text }, 12).catch(() => {}),
         incrementMetric(userId, 'postCount', 1, 2).catch(() => {}),
@@ -581,6 +622,7 @@ export default async function handler(req: any, res: any) {
         sourceCount: posts.length,
         format: usedStyle.id,
         topic: usedTopicTag,
+        searchUsed: !!searchContext,
       })
     } catch (e: any) {
       if (charged) {
