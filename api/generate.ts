@@ -62,10 +62,41 @@ function clampChars(s: string, max: number) {
 function postProcessOutput(raw: string) {
   let out = String(raw || '').trim()
   if (!out) return out
-  out = out.replace(/^"(.*)"$/s, '$1').replace(/^'(.*)'$/s, '$1').trim()
+  // Strip surrounding quotes if model added them
+  out = out.replace(/^"([\s\S]*)"$/s, '$1').replace(/^'([\s\S]*)'$/s, '$1').trim()
+  // Replace long dashes with ellipsis
   out = out.replace(/—/g, '...').replace(/–/g, '...').replace(/\u2026/g, '...')
-  out = out.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
-  return out
+  // Collapse multiple spaces/tabs within a line (but preserve newlines)
+  out = out.replace(/[ \t]{2,}/g, ' ')
+  // Collapse 3+ consecutive newlines to max 2 (preserve paragraph breaks)
+  out = out.replace(/\n{3,}/g, '\n\n')
+  // Convert single newlines that are NOT part of a paragraph break into proper separation
+  // (keep \n\n as-is, keep single \n as-is — Twitter uses both)
+  return out.trim()
+}
+
+/**
+ * Ensures the post uses proper Twitter line-break formatting.
+ * If the output looks like a solid paragraph (no newlines), tries to
+ * split it at sentence boundaries to add breathing room.
+ */
+function enforceTwitterFormat(text: string, maxChars: number): string {
+  const trimmed = text.trim()
+  if (!trimmed) return trimmed
+
+  // If already has line breaks, it's probably formatted correctly
+  if (trimmed.includes('\n')) return clampChars(trimmed, maxChars)
+
+  // It's a single paragraph — split at sentence boundaries
+  // Add a blank line between each sentence
+  const sentences = trimmed
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+
+  if (sentences.length <= 1) return clampChars(trimmed, maxChars)
+
+  return clampChars(sentences.join('\n\n'), maxChars)
 }
 
 function ensureBaseMention(text: string): string {
@@ -73,9 +104,8 @@ function ensureBaseMention(text: string): string {
   const suffixes = [
     '\n\nHappened on Base, for context.',
     '\n\nAll of this is on Base.',
-    '\n\nThis is what Base feels like day to day.',
     '\n\nBase, specifically.',
-    '\n\nContext: I was on Base.',
+    '\n\nContext: Base.',
   ]
   return text.trimEnd() + suffixes[Math.floor(Math.random() * suffixes.length)]
 }
@@ -134,8 +164,17 @@ type StyleDeck = {
 const STYLE_DECK: StyleDeck[] = [
   {
     id: 'one-liner',
-    label: 'Dry one-liner or two-liner',
-    formatGuide: '1–2 lines max. No bullets. Reads like a passing thought you actually had. The second line should land on its own.',
+    label: 'Hook + one follow-up line',
+    formatGuide: [
+      'STRUCTURE: exactly 2 lines separated by a blank line.',
+      'Line 1 (hook): short, punchy, stands alone. A specific observation or irony. NOT a question.',
+      'Line 2 (landing): the quiet follow-up that reframes or completes it.',
+      'Example structure:',
+      '  "Sent 12 transactions on Base today."',
+      '  ""',
+      '  "Thought about gas zero times."',
+      'Do NOT run them together into one sentence.',
+    ].join('\n'),
     anglePrompts: [
       'something that felt weird until it just worked',
       'a small thing you noticed that others probably missed',
@@ -149,8 +188,21 @@ const STYLE_DECK: StyleDeck[] = [
   },
   {
     id: 'micro-story',
-    label: 'Personal micro-story',
-    formatGuide: '3–5 very short lines. Write like a real person recounting a specific small moment. No lesson, no tutorial. The ending is understated — not motivational.',
+    label: 'Personal micro-story (short lines, blank lines between)',
+    formatGuide: [
+      'STRUCTURE: 3–5 short sentences, each on its own line, separated by blank lines.',
+      'Write like a real person recounting a specific small moment.',
+      'NO lesson. NO tutorial. NO "the takeaway is". Ending is understated.',
+      'Example structure:',
+      '  "Tried deploying a contract on Base last night."',
+      '  ""',
+      '  "Expected the usual friction."',
+      '  ""',
+      '  "It was live in 4 minutes."',
+      '  ""',
+      '  "Went to bed."',
+      'Keep each line under 12 words. Use commas and periods naturally.',
+    ].join('\n'),
     anglePrompts: [
       'the first time a transaction confirmed so fast you had to double-check',
       'trying something new on Base and it just working without drama',
@@ -159,13 +211,24 @@ const STYLE_DECK: StyleDeck[] = [
       'going down a rabbit hole in the Base ecosystem late at night',
     ],
     weight: 1.1,
-    maxTokens: 160,
-    maxChars: 380,
+    maxTokens: 180,
+    maxChars: 400,
   },
   {
     id: 'contrast',
-    label: 'Before vs after (personal)',
-    formatGuide: '2–3 short line pairs: "Before: ..." then "Now: ..." — or "Used to: ..." then "These days: ...". Personal experience only. The "before" must be accurate — Base launched with low fees, so do not write a "before" where L2s had high fees.',
+    label: 'Before vs after (line-by-line, blank lines between pairs)',
+    formatGuide: [
+      'STRUCTURE: 2–3 short pairs, each pair on its own line, separated by blank lines.',
+      'Use "Used to: ..." then blank line, then "Now: ..."',
+      'Personal experience only. Keep each line under 10 words.',
+      'Example structure:',
+      '  "Used to: check gas before every transaction."',
+      '  ""',
+      '  "Now: forget gas exists."',
+      '  ""',
+      '  "Base did that."',
+      'IMPORTANT: Base launched with low fees — do not write a "before" implying L2s had high fees.',
+    ].join('\n'),
     anglePrompts: [
       'how you thought about deploying contracts before vs how you think about it now',
       'checking gas before every tx vs not thinking about it anymore',
@@ -173,13 +236,26 @@ const STYLE_DECK: StyleDeck[] = [
       'your mental model of L2s before vs after using Base every day',
     ],
     weight: 0.95,
-    maxTokens: 140,
-    maxChars: 340,
+    maxTokens: 160,
+    maxChars: 360,
   },
   {
     id: 'raw-take',
-    label: 'Raw honest take',
-    formatGuide: '2–4 lines. Direct, no hedging. Sounds like something you would say to a friend who is also in crypto. Not a hot take for engagement — an actual opinion you hold.',
+    label: 'Raw honest take (hook + short lines)',
+    formatGuide: [
+      'STRUCTURE: hook line, then blank line, then 2–3 more short lines each separated by blank lines.',
+      'Hook line: the sharpest version of your opinion. Direct. No hedging.',
+      'Follow-up lines: expand briefly, still sharp.',
+      'Example structure:',
+      '  "Most L2 debates are about the wrong thing."',
+      '  ""',
+      '  "People argue fees vs speed."',
+      '  ""',
+      '  "The actual question is: does it disappear into the background?"',
+      '  ""',
+      '  "Base does."',
+      'Sounds like something you would say to a friend in crypto. NOT a hot take for engagement.',
+    ].join('\n'),
     anglePrompts: [
       'why most L2 debates miss what actually matters for daily use',
       'something the Base ecosystem does quietly well that the broader crypto conversation ignores',
@@ -188,13 +264,24 @@ const STYLE_DECK: StyleDeck[] = [
       'what makes Base feel different from the builder side vs the user side',
     ],
     weight: 1.0,
-    maxTokens: 150,
-    maxChars: 360,
+    maxTokens: 180,
+    maxChars: 400,
   },
   {
     id: 'curious-question',
-    label: 'Genuine curious question',
-    formatGuide: '1 real question you actually have + 1–2 lines of your own thinking. NOT engagement bait. NOT "let me know below!" — you are thinking out loud, not running a poll.',
+    label: 'Genuine question + thinking out loud',
+    formatGuide: [
+      'STRUCTURE: 1 real question on its own line, then blank line, then 1–2 lines of your thinking.',
+      'The question must be something you actually wonder. NOT engagement bait.',
+      'Your thinking after it is NOT an answer — just where your head is.',
+      'Example structure:',
+      '  "Why do some Base apps get immediate traction when others with the same idea stay quiet?"',
+      '  ""',
+      '  "Not obvious it\'s product quality."',
+      '  ""',
+      '  "Might be timing and who shows up first."',
+      'Do NOT end with "let me know" or "drop a comment". You are thinking out loud.',
+    ].join('\n'),
     anglePrompts: [
       'something about how builders choose Base vs other chains',
       'a UX pattern across Base apps that surprised you and you want to understand why',
@@ -202,8 +289,8 @@ const STYLE_DECK: StyleDeck[] = [
       'why some Base apps get real traction when others with similar ideas stay quiet',
     ],
     weight: 0.8,
-    maxTokens: 150,
-    maxChars: 360,
+    maxTokens: 180,
+    maxChars: 400,
   },
 ]
 
@@ -329,25 +416,26 @@ function fastLocalGenerate(args: { posts: Array<{ author: string; text: string }
   const corpus = args.posts.map((p) => p.text).join(' ').toLowerCase()
   const has = (words: string[]) => words.some((w) => corpus.includes(w))
 
+  // All fallbacks use Twitter format: short lines + blank lines between
   const fallbacks = [
-    "Been using Base almost daily now. The part that actually changed my workflow isn't what I expected.",
-    'Deployed something on Base yesterday. Took maybe ten minutes from idea to live. That used to mean something different.',
-    "The quiet thing about Base is that it stops being a topic of conversation the moment it just works.",
-    "Still find it slightly funny that the chain I thought I'd try once has become the one I actually use.",
-    "You stop thinking about gas at some point. That's when it starts feeling like infrastructure.",
-    "Something clicked about onchain apps this week that I didn't expect to click.",
+    "Been using Base almost daily now.\n\nThe part that changed my workflow isn't what I expected.",
+    "Deployed something on Base yesterday.\n\nTen minutes from idea to live.\n\nThat used to mean something different.",
+    "The quiet thing about Base:\n\nit stops being a topic of conversation the moment it just works.",
+    "Still find it funny that the chain I thought I'd try once\n\nis the one I actually use every day.",
+    "You stop thinking about gas at some point.\n\nThat's when it starts feeling like infrastructure.",
+    "Something clicked about onchain apps this week\n\nthat I didn't expect to click.",
   ]
 
   let pick = fallbacks[Math.floor(Math.random() * fallbacks.length)]
 
   if (has(['fee', 'fees', 'gas'])) {
-    pick = "Sent a transaction on Base yesterday. The gas was a fraction of a cent. Didn't think about it. That's kind of the point."
+    pick = "Sent a transaction on Base yesterday.\n\nGas was a fraction of a cent.\n\nDidn't think about it.\n\nThat's kind of the point."
   } else if (has(['ship', 'builder', 'build', 'deploy'])) {
-    pick = "Shipped something on Base this week that I kept putting off because I expected it to be annoying. It wasn't."
+    pick = "Shipped something on Base this week I kept putting off.\n\nExpected it to be annoying.\n\nIt wasn't."
   } else if (has(['farcaster', 'cast', 'social', 'frames'])) {
-    pick = "Onchain social still feels weird to explain to people outside it. From inside it, it already feels normal."
+    pick = "Onchain social still feels weird to explain to people outside it.\n\nFrom inside it, it already feels normal."
   } else if (has(['defi', 'swap', 'liquidity', 'yield'])) {
-    pick = "The DeFi stuff on Base is genuinely usable now. That's a sentence I didn't think I'd be saying without caveats."
+    pick = "The DeFi on Base is genuinely usable now.\n\nThat's a sentence I didn't think I'd say without caveats."
   }
 
   return clampChars(pick, args.style.maxChars)
@@ -385,11 +473,32 @@ async function openaiGenerate(args: {
     'Your voice: direct, occasionally dry, genuinely curious. Sometimes a little tired of hype.',
     'You have actually used Base. You notice small, specific things. You do not write like a marketer.',
     '',
+    '=== TWITTER FORMATTING RULES (CRITICAL) ===',
+    'Real crypto Twitter posts are NOT written as paragraphs. They use short lines with blank lines between them.',
+    'Each idea gets its own line. A blank line (empty line) separates ideas.',
+    'This creates visual breathing room and makes each line land harder.',
+    '',
+    'CORRECT format (short lines + blank lines):',
+    '  "Deployed a contract on Base."',
+    '  ""',
+    '  "Total time: 6 minutes."',
+    '  ""',
+    '  "I was honestly waiting for something to break."',
+    '',
+    'WRONG format (paragraph — never do this):',
+    '  "I deployed a contract on Base and it only took 6 minutes, which surprised me because I was waiting for something to go wrong."',
+    '',
+    'Key rules for formatting:',
+    '- Keep each line SHORT: 5–14 words maximum per line.',
+    '- Put a BLANK LINE between every sentence or thought.',
+    '- Never run two ideas together into one long sentence.',
+    '- Use commas and periods naturally, but break to a new line often.',
+    '- The hook (first line) must be able to stand completely alone.',
+    '',
     '=== WHAT MAKES A POST FEEL REAL ===',
     '- It comes from a specific observation or moment, not a general statement.',
     '- It does not try to teach anyone. It says what you noticed or thought.',
     '- It sounds like something you would say in a group chat, not a newsletter.',
-    '- It uses normal language. Technical terms only when specific and natural.',
     '- It does not wrap up with a lesson, summary, or call to action.',
     '',
     '=== ABSOLUTE PROHIBITIONS ===',
@@ -401,6 +510,7 @@ async function openaiGenerate(args: {
     '- No 🚀 💡 🎯 ✅ 🔥 ⚡ 🏆 💪 emojis. Max 1 emoji total, only if it genuinely fits.',
     '- No writing about Base like you are advertising a product.',
     '- Long dashes (— or –) → use "..." instead.',
+    '- NO paragraphs. If a thought is longer than 14 words, break it into two lines.',
     '',
     '=== FACTS YOU ARE ALLOWED TO USE ===',
     ...BASE_STATIC_FACTS.map((f) => `- ${f}`),
@@ -420,6 +530,7 @@ async function openaiGenerate(args: {
     '- Mention "Base" at most twice. Once is usually enough.',
     '- Do NOT copy or closely paraphrase source posts.',
     '- Output ONLY the post text. No quotes, no preamble, no explanation.',
+    '- Use actual newlines (\\n) between lines and double newlines (\\n\\n) for blank lines between thoughts.',
   ].filter(Boolean).join('\n')
 
   // ── User prompt ────────────────────────────────────────────────
@@ -487,7 +598,7 @@ async function openaiGenerate(args: {
   const out = String(jsonResp?.choices?.[0]?.message?.content || '').trim()
   if (!out) return fastLocalGenerate(args)
 
-  let cleaned = clampChars(postProcessOutput(out), style.maxChars)
+  let cleaned = postProcessOutput(out)
 
   // Strip banned openers
   const lower = cleaned.toLowerCase().trim()
@@ -499,14 +610,14 @@ async function openaiGenerate(args: {
     }
   }
 
-  // Strip checklist format (- [ ] pattern) → flatten to prose
+  // Strip checklist format (- [ ] pattern) → flatten to Twitter lines
   if (/^[-*]\s*\[[ x]\]/m.test(cleaned)) {
     cleaned = cleaned
       .split('\n')
       .map((l) => l.replace(/^[-*]\s*\[[ x]\]\s*/, '').trim())
       .filter(Boolean)
-      .join(' ')
-    cleaned = clampChars(postProcessOutput(cleaned), style.maxChars)
+      .join('\n\n')
+    cleaned = postProcessOutput(cleaned)
   }
 
   // Strip fake character dialogue (e.g. "Aneri🟦: ...")
@@ -515,9 +626,12 @@ async function openaiGenerate(args: {
       .split('\n')
       .map((l) => l.replace(/^\w[\w\s]{0,20}🟦\s*:\s*/, '').trim())
       .filter(Boolean)
-      .join('\n')
-    cleaned = clampChars(postProcessOutput(cleaned), style.maxChars)
+      .join('\n\n')
+    cleaned = postProcessOutput(cleaned)
   }
+
+  // Enforce Twitter line-break format (no solid paragraphs)
+  cleaned = enforceTwitterFormat(cleaned, style.maxChars)
 
   return cleaned
 }
