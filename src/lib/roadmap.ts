@@ -20,8 +20,21 @@ export type RoadmapItem = {
  * - Older/done items: tone: 'green'.
  */
 export const ROADMAP: RoadmapItem[] = [             
-
 {
+  id: '2026-05-11-Add-New-Data',
+  date: '11.05.2026',
+  title: 'Staying Based',
+  text: 'Added more error and bugs to fix it later',
+  tone: 'red',
+},
+  {
+  id: '2026-05-03-Add-New-Data',
+  date: '03.05.2026',
+  title: 'Add new post generation data',
+  text: 'New information has been added, so that the post generation will be based on the latest information. To get the perfect post, generate the post several times and choose the post according to your preference. (#03.02.2026-03.03.2026)',
+  tone: 'green',
+},
+  {
   id: '2026-03-03-Add-New-Data',
   date: '03.03.2026',
   title: 'Add new post generation data',
