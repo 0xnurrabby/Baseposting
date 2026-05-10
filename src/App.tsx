@@ -9,7 +9,7 @@ import { Skeleton } from '@/components/Skeleton'
 import { RoadmapBell } from '@/components/RoadmapBell'
 import { LeaderboardPage } from '@/components/LeaderboardPage'
 import { LeaderboardIcon } from '@/components/LeaderboardIcon'
-import { apiGenerate, apiMe, apiShareAward, apiVerifyTx, type Identity } from '@/lib/api'
+import { apiGenerate, apiMe, apiShareAward, type Identity } from '@/lib/api'
 import { connectWalletProvider, getEthereumProvider, hapticImpact, hapticSelection, initMiniApp, listAvailableWallets, shareToTwitter, type WalletOption } from '@/lib/miniapp'
 
 const CONTRACT = '0xB331328F506f2D35125e367A190e914B1b6830cF'
@@ -29,7 +29,7 @@ const LOG_ACTION_ABI = [
 
 const SITE_URL = import.meta.env.VITE_PUBLIC_SITE_URL || window.location.origin
 const WALLET_CREDIT_KEY = 'bp_credits_cache_v1'
-const PENDING_TX_KEY = 'bp_pending_tx_v1'
+
 
 const SHARE_COPY_TEMPLATES = [
   'Okay this is actually useful 💙 Now I just open BasePosting — one tap gives banger post ideas in seconds. Try it: {url}',
@@ -262,8 +262,7 @@ export default function App() {
   const [sharing, setSharing] = useState(false)
 
   const [submittingCredit, setSubmittingCredit] = useState(false)
-  const [verifyingCredit, setVerifyingCredit] = useState(false)
-  const verifyInFlight = useRef<string>('')
+  const [creditAdded, setCreditAdded] = useState(false)
 
   const [walletConnecting, setWalletConnecting] = useState(false)
   const [walletModalOpen, setWalletModalOpen] = useState(false)
@@ -536,100 +535,13 @@ export default function App() {
     void load()
   }, [identity.address, miniLoaded])
 
-  function savePendingTx(txHash: string, addr: string) {
-    try {
-      localStorage.setItem(
-        PENDING_TX_KEY,
-        JSON.stringify({ txHash, address: addr.toLowerCase(), ts: Date.now() })
-      )
-    } catch {
-      // ignore
-    }
+
+  function triggerCreditAdded() {
+    setCredits((prev) => (prev == null ? 1 : prev + 1))
+    setCreditAdded(true)
+    setTimeout(() => setCreditAdded(false), 2500)
+    toast.success('+1 credit added 💙')
   }
-
-  function clearPendingTx() {
-    try {
-      localStorage.removeItem(PENDING_TX_KEY)
-    } catch {
-      // ignore
-    }
-  }
-
-  function readPendingTx(): { txHash: string; address: string; ts: number } | null {
-    try {
-      const raw = localStorage.getItem(PENDING_TX_KEY)
-      if (!raw) return null
-      const parsed = JSON.parse(raw)
-      if (!parsed?.txHash || !parsed?.address) return null
-      if (Date.now() - Number(parsed.ts || 0) > 2 * 60 * 60 * 1000) {
-        clearPendingTx()
-        return null
-      }
-      return parsed
-    } catch {
-      return null
-    }
-  }
-
-  async function verifyCreditTxInBackground(id: Identity, txHash: string) {
-    if (verifyInFlight.current === txHash) return
-    verifyInFlight.current = txHash
-    setVerifyingCredit(true)
-
-    // Server now polls internally for up to 15s — frontend just calls once and waits.
-    // Only retry if server returns pending (>15s confirmation, very rare on Base)
-    // or if the request itself failed (network error).
-    const maxRetries = 4
-    const retryDelayMs = 3000
-
-    try {
-      for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-          const out = await apiVerifyTx(id, txHash)
-          if (!out.pending) {
-            setCredits(out.credits)
-            toast.success(out.alreadyCounted ? 'Credit already added' : 'Txn verified. +1 credit added 💙')
-            clearPendingTx()
-            return out
-          }
-          // Server returned pending (tx took >15s) — wait briefly and retry once
-          await new Promise((r) => setTimeout(r, retryDelayMs))
-        } catch (e: any) {
-          const msg = String(e?.message || '').toLowerCase()
-          const retriable =
-            e?.name === 'AbortError' ||
-            msg.includes('timed out') ||
-            msg.includes('failed to fetch') ||
-            msg.includes('networkerror') ||
-            msg.includes('load failed') ||
-            msg.includes('aborted')
-          if (!retriable) {
-            clearPendingTx()
-            throw e
-          }
-          if (attempt < maxRetries - 1) {
-            await new Promise((r) => setTimeout(r, retryDelayMs))
-          }
-        }
-      }
-      // Exhausted retries — tx taking very long, notify user
-      toast.message('Still confirming. You can close the app — credit will be added automatically.')
-    } finally {
-      if (verifyInFlight.current === txHash) {
-        verifyInFlight.current = ''
-      }
-      setVerifyingCredit(false)
-    }
-  }
-
-  useEffect(() => {
-    if (!miniLoaded || !identity.address) return
-    const pending = readPendingTx()
-    if (!pending) return
-    if (pending.address !== identity.address.toLowerCase()) return
-    void verifyCreditTxInBackground({ address: identity.address }, pending.txHash)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [miniLoaded, identity.address])
 
   const openWalletPicker = useCallback(async () => {
     setWalletConnecting(true)
@@ -880,15 +792,12 @@ export default function App() {
   }
 
   const onGetCredit = useCallback(async () => {
-    if (submittingCredit || verifyingCredit) return
+    if (submittingCredit) return
 
     setSubmittingCredit(true)
     try {
       const addr = await ensureWalletIdentity()
-      if (!addr) {
-        setSubmittingCredit(false)
-        return
-      }
+      if (!addr) { setSubmittingCredit(false); return }
 
       await hapticImpact(capabilitiesRef.current, 'medium')
       const provider: any = await getEthereumProvider(selectedWalletIdRef.current, {
@@ -899,50 +808,22 @@ export default function App() {
       const chainId = (await provider.request({ method: 'eth_chainId' })) as string
       if (chainId !== '0x2105') {
         try {
-          await provider.request({
-            method: 'wallet_switchEthereumChain',
-            params: [{ chainId: '0x2105' }],
-          })
+          await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x2105' }] })
         } catch {
-          throw new Error('Please switch to Base Mainnet (0x2105) in your wallet to continue.')
+          throw new Error('Please switch to Base Mainnet in your wallet to continue.')
         }
       }
 
       const action = keccak256(toHex('BASEPOSTING_GET_CREDIT'))
-      const payload = toHex(
-        JSON.stringify({ address: addr, ts: Date.now(), app: 'BasePosting' })
-      )
-
+      const payload = toHex(JSON.stringify({ address: addr, ts: Date.now(), app: 'BasePosting' }))
       const data = encodeFunctionData({
         abi: LOG_ACTION_ABI,
         functionName: 'logAction',
         args: [action, payload],
       })
 
-      let txHash = ''
-      let usedFallback = false
-
-      const sendLegacyTx = async () => {
-        const balHex = (await provider.request({ method: 'eth_getBalance', params: [addr, 'latest'] })) as string
-        if (BigInt(balHex) === 0n) {
-          throw new Error(
-            'Your wallet has 0 Base ETH to pay gas. Please add a small amount of ETH on Base (use bridge.base.org) and retry.'
-          )
-        }
-const nonceHex = await provider.request({
-          method: 'eth_getTransactionCount',
-          params: [addr, 'pending'],
-        }) as string
-
-        const tx: any = {
-          from: addr,
-          to: CONTRACT,
-          data,
-          nonce: nonceHex,
-        }
-        return (await provider.request({ method: 'eth_sendTransaction', params: [tx] })) as string
-      }
-
+      // Try wallet_sendCalls first, fall back to eth_sendTransaction
+      let sent = false
       try {
         const callsPayload: any = {
           version: '2.0.0',
@@ -952,58 +833,49 @@ const nonceHex = await provider.request({
           calls: [{ to: CONTRACT, data }],
         }
         const sendRes: any = await provider.request({ method: 'wallet_sendCalls', params: [callsPayload] })
-
         const confirmationId =
           typeof sendRes === 'string'
             ? sendRes
             : sendRes?.callsId || sendRes?.batchId || sendRes?.id || sendRes?.result || sendRes?.hash
-
-        if (!confirmationId || typeof confirmationId !== 'string') {
+        if (confirmationId && typeof confirmationId === 'string') {
+          // wallet_sendCalls accepted — user confirmed in wallet
+          sent = true
+        } else {
           throw new Error('wallet_sendCalls returned no id')
         }
-
-        toast.message('Transaction submitted. Verifying on-chain…')
-        txHash = /^0x[a-fA-F0-9]{64}$/.test(confirmationId)
-          ? confirmationId
-          : await waitForCallsTxHash(provider, confirmationId, { timeoutMs: 20000, pollMs: 1200 })
       } catch (e: any) {
         if (isUserRejection(e)) throw e
-        if (isMethodNotSupported(e) || isInvalidParamsOrCapability(e)) {
-          usedFallback = true
-        } else {
-          usedFallback = true
+        // Method not supported — fall back to legacy tx
+        const balHex = (await provider.request({ method: 'eth_getBalance', params: [addr, 'latest'] })) as string
+        if (BigInt(balHex) === 0n) {
+          throw new Error('Your wallet has 0 Base ETH for gas. Add a small amount via bridge.base.org and retry.')
         }
+        const nonceHex = await provider.request({ method: 'eth_getTransactionCount', params: [addr, 'pending'] }) as string
+        await provider.request({ method: 'eth_sendTransaction', params: [{ from: addr, to: CONTRACT, data, nonce: nonceHex }] })
+        sent = true
       }
 
-      if (!txHash && usedFallback) {
-        txHash = await sendLegacyTx()
-        toast.message('Transaction submitted. Verifying on-chain…')
+      if (sent) {
+        // Wallet confirmed the txn — add credit immediately, no onchain verification needed
+        triggerCreditAdded()
+        await hapticImpact(capabilitiesRef.current, 'medium')
       }
 
-      if (!txHash) {
-        throw new Error('Could not submit transaction. Please try again.')
-      }
-
-      savePendingTx(txHash, addr)
-      setSubmittingCredit(false)
-      await verifyCreditTxInBackground({ address: addr }, txHash)
-} catch (e: any) {
+    } catch (e: any) {
       if (isUserRejection(e)) {
         toast.message('Transaction cancelled')
       } else {
         const msg = String(e?.message || '').toLowerCase()
         if (msg.includes('nonce too low') || msg.includes('nonce') || msg.includes('replacement transaction underpriced')) {
-          toast.error(
-            '⚠️ Nonce mismatch! Wallet → Settings → Advanced → Reset Account or use Rabby wallet for better performance'
-          )
+          toast.error('⚠️ Nonce mismatch — Wallet → Settings → Advanced → Reset Account')
         } else {
           toast.error(e?.message || 'Transaction failed')
         }
       }
+    } finally {
       setSubmittingCredit(false)
-      setVerifyingCredit(false)
     }
-  }, [submittingCredit, verifyingCredit, ensureWalletIdentity])
+  }, [submittingCredit, ensureWalletIdentity])
 
   const onSendTip = useCallback(async () => {
     if (!isAddress(RECIPIENT)) {
@@ -1096,8 +968,8 @@ const nonceHex = await provider.request({
   const openTipModal = useCallback(() => setTipOpen(true), [])
 
   const creditsLabel = credits === null ? '—' : String(credits)
-  const creditBusy = submittingCredit || verifyingCredit
-  const creditLoadingText = submittingCredit ? 'Confirm in wallet' : 'Verifying tx'
+  const creditBusy = submittingCredit
+  const creditLoadingText = 'Confirm in wallet'
 
   if (!miniLoaded) {
     return (
@@ -1135,8 +1007,12 @@ const nonceHex = await provider.request({
                 <div>
                   <div className="flex items-center gap-2">
                     <div className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">BasePosting</div>
-                    <span className="inline-flex items-center rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs font-semibold text-zinc-700 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-200">
-                      {loadingMe ? '…' : `${creditsLabel} credits`}
+                    <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold backdrop-blur transition-all duration-300 ${
+                      creditAdded
+                        ? 'border-blue-400 bg-blue-500 text-white scale-110 shadow-lg shadow-blue-500/40'
+                        : 'border-zinc-200 bg-white/70 text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-200'
+                    }`}>
+                      {loadingMe ? '…' : creditAdded ? `+1 · ${creditsLabel} credits 💙` : `${creditsLabel} credits`}
                     </span>
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400"><span>Stay consistent, Stay based, Post banger💙.</span></div>
@@ -1204,7 +1080,7 @@ const nonceHex = await provider.request({
                       >
                         <LoadingLabel
                           active={creditBusy}
-                          estimateSec={submittingCredit ? 20 : 8}
+                          estimateSec={20}
                           idleText="Get Credit"
                           icon={<Wallet className="h-4 w-4" />}
                           loadingText={creditLoadingText}
