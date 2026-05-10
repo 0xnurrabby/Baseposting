@@ -89,7 +89,7 @@ async function fetchGeminiSearchSummary(query: string): Promise<string> {
   const apiKey = process.env.AI_GATEWAY_API_KEY
   if (!apiKey) throw new Error('AI_GATEWAY_API_KEY not set')
 
-  const model = process.env.AI_GATEWAY_MODEL || 'google/gemini-2.5-flash-lite-preview-06-17'
+  const model = process.env.AI_GATEWAY_MODEL || 'google/gemini-3.1-flash-lite'
   const baseURL = 'https://ai-gateway.vercel.sh/v1'
 
   const systemPrompt = [
